@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { BridgeError, readJson, signalWithTimeout, backoff, sleep, requireLoopback } from './util.js';
 
 const wrappers = { 'session/list': '_request', 'session/create': 'request', 'session/prompt': 'request', 'session/cancel': 'request',
-  'session/follow': 'request', 'session/page': 'request', 'session/projections': 'request', 'session/updateQueue': 'request' };
+  'session/follow': 'request', 'session/page': 'request', 'session/projections': 'request', 'session/updateQueue': 'request', 'session/selectModel': 'request' };
 export class DshClient extends EventEmitter {
   constructor(config, { fetchImpl = fetch, Socket = WebSocket } = {}) {
     super(); this.config = config; requireLoopback(config.baseUrl); this.fetch = fetchImpl; this.Socket = Socket;

@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BridgeError, backoff, sleep, log } from './util.js';
+import { CognitiveService } from './cognitive/service.js';
 
 export const isCommand = text => /^\/(?:approve|deny|answer|cancel|reset|status)(?:\s|$)/.test(text.trim());
 export function publicEvent(event) {
@@ -37,6 +38,7 @@ export class Engine {
   constructor(config, store, dsh, ilink, account, signal) {
     Object.assign(this, { config, store, dsh, ilink, account, signal });
     this.controller = new AbortController(); this.signal = AbortSignal.any([signal, this.controller.signal]);
+    this.cognitive = config.cognitive?.enabled ? new CognitiveService(config, dsh, account, this.signal) : null;
     this.busy = new Map(); this.chains = new Map(); this.pendingTasks = new Set(); this.stopped = false;
     dsh.on('session', (sid, frame) => this.enqueueSession(sid, frame));
     dsh.on('request', request => this.task(() => this.onRequest(request)));
@@ -47,7 +49,7 @@ export class Engine {
     dsh.on('remote', frame => {
       if (frame.event === 'api-session/error') {
         const job = store.active(frame.args?.[0]);
-        if (job?.account === account.accountId) { store.updateJob(job.id, 'review', 'dsh-agent-error'); store.reply(job, 'DSH Agent 发生异常。请使用 /status 查看，或 /cancel 停止后重试。', 'agent-error:' + job.id); }
+        if (job?.account === account.accountId) { store.updateJob(job.id, 'review', 'dsh-agent-error'); this.cognitive?.idle(job.session); store.reply(job, 'DSH Agent 发生异常。请使用 /status 查看，或 /cancel 停止后重试。', 'agent-error:' + job.id); }
       }
     });
   }
@@ -85,6 +87,10 @@ export class Engine {
         const event = entry.event;
         if (!Number.isSafeInteger(event?.seq) || event.seq < 0) throw new BridgeError('dsh-event-invalid');
         if (event.seq <= cursor) continue;
+        if (this.cognitive) {
+          try { this.cognitive.event(sid, event, this.store.active(sid)?.request_id); }
+          catch { log('cognitive.capture-pending', { code: 'event-storage' }); }
+        }
         if (cursor >= 0 && event.seq !== cursor + 1) throw new BridgeError('dsh-event-gap');
         const data = publicEvent(event);
         if (data) this.store.db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?)').run(sid, event.seq, event.type, JSON.stringify(data));
@@ -113,18 +119,23 @@ export class Engine {
     if (!text) text = 'DSH 已结束本轮，未产生可发送的文本。';
     this.store.reply(job, text, 'result:' + job.id, this.config.bridge.maxReplyChars);
     this.store.updateJob(job.id, 'done');
+    if (this.cognitive) {
+      try { this.cognitive.completed(this.store.job(job.id), text, reason); }
+      catch { log('cognitive.capture-pending', { code: 'exchange-storage' }); }
+    }
   }
   async submit(job) {
     const mapping = this.store.ensureMapping(job.account, job.user);
     const session = mapping.session;
+    this.cognitive?.bind(job, session);
     const text = this.store.tx(() => {
       const saved = this.store.job(job.id); const payload = JSON.parse(saved.payload);
       if (typeof payload.dshText !== 'string') {
         // Only the QR-authorized owner is OTREE. A display name grants no capabilities.
         // Already-attempted legacy jobs must retain their original body for admission retries.
         const owner = saved.account === this.account.accountId && saved.user === this.account.ownerId;
-        payload.dshText = saved.attempts === 0 && owner
-          ? '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\n' + payload.text
+        payload.dshText = saved.attempts === 0
+          ? '【微信发送者身份】\n当前与你对话的人是 ' + (owner ? 'OTREE' : '微信用户 ' + JSON.stringify(saved.user)) + '。\n\n【用户消息】\n' + payload.text
           : payload.text;
       }
       // Pin the exact submitted text before any RPC; retries and restarts reuse the same body.
@@ -146,7 +157,7 @@ export class Engine {
       if (current.state === 'done') return;
       // Persisted requestId + explicit session identity make a later admission retry bounded to the same request.
       if (e.retryable) this.store.updateJob(job.id, 'submitting', e.code, Date.now() + backoff(job.attempts));
-      else { this.store.updateJob(job.id, 'review', e.code ?? 'dsh-submit'); this.store.reply(job, 'DSH 暂未接受或确认此消息。请在本地检查状态；不会自动创建替代会话。', 'submit-error:' + job.id); }
+      else { this.store.updateJob(job.id, 'review', e.code ?? 'dsh-submit'); this.cognitive?.idle(session); this.store.reply(job, 'DSH 暂未接受或确认此消息。请在本地检查状态；不会自动创建替代会话。', 'submit-error:' + job.id); }
     }
   }
   approvalBinding(pending) {
@@ -234,6 +245,7 @@ export class Engine {
         if (cmd === '/reset') this.store.db.prepare('DELETE FROM conversations WHERE account=? AND user=?').run(job.account, job.user);
       });
       if (cmd === '/reset' && map) this.dsh.unfollow?.(map.session);
+      if (map) this.cognitive?.idle(map.session);
       reply = cmd === '/reset' ? '会话映射已清理，下条消息将创建新的 DSH Session。原 DSH 历史保留。' : '已请求取消 DSH 任务并清理本会话排队消息。';
     } else {
       const p = this.store.db.prepare("SELECT * FROM pending WHERE id=? AND account=? AND user=? AND state='pending'").get(id ?? '', job.account, job.user);
@@ -267,6 +279,7 @@ export class Engine {
     for (const j of this.store.db.prepare("SELECT * FROM jobs WHERE account=? AND state='waiting' AND updated<?").all(this.account.accountId, now - this.config.dsh.turnTimeoutMs)) {
       this.store.updateJob(j.id, 'review', 'turn-timeout');
       await this.dsh.rpc('session/cancel', { sessionId: j.session }, this.signal).catch(() => {});
+      this.cognitive?.idle(j.session);
       this.store.reply(j, 'DSH 响应超时，已请求取消。任务保留以供核对；使用 /status 或 /cancel。', 'timeout:' + j.id);
     }
     const jobs = this.store.db.prepare("SELECT * FROM jobs WHERE account=? AND state IN ('queued','backoff','submitting') AND retry_at<=? ORDER BY created,rowid").all(this.account.accountId, now);
@@ -323,14 +336,21 @@ export class Engine {
   }
   async run() {
     this.store.recover();
+    this.cognitive?.backfill(this.store);
     for (const row of this.store.db.prepare('SELECT session FROM conversations WHERE account=?').all(this.account.accountId)) this.dsh.follow(row.session);
     const tasks = [this.dsh.run(this.signal), this.poll(), (async () => {
       while (!this.signal.aborted) { await this.tick(); await sleep(100, this.signal).catch(() => {}); }
     })(), (async () => {
       while (!this.signal.aborted) { await this.sendOne(); await sleep(200, this.signal).catch(() => {}); }
     })()];
+    if (this.cognitive) tasks.push((async () => {
+      while (!this.signal.aborted) {
+        try { await this.cognitive.tick(); } catch { log('cognitive.failed', { code: 'scheduler' }); }
+        await sleep(1000, this.signal).catch(() => {});
+      }
+    })());
     try { await Promise.all(tasks); }
-    finally { this.stopped = true; this.controller.abort(); await Promise.allSettled(tasks); await this.drain(); }
+    finally { this.stopped = true; this.controller.abort(); await Promise.allSettled(tasks); await this.drain(); await this.cognitive?.close(); }
   }
   async drain() { await Promise.allSettled([...this.busy.values(), ...this.chains.values(), ...this.pendingTasks]); }
 }

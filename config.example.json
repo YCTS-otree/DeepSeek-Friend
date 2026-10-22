@@ -17,6 +17,25 @@
     "timeoutMs": 15000,
     "pollTimeoutMs": 35000
   },
+  "cognitive": {
+    "enabled": true,
+    "idleExtractionMinutes": 15,
+    "retrievalTokenBudget": 1600,
+    "selfTokenBudget": 2400,
+    "inputTokenBudget": 8000,
+    "outputTokenBudget": 1800,
+    "workerTimeoutMs": 180000,
+    "maxAttempts": 3,
+    "dreaming": {
+      "enabled": true,
+      "time": "03:00",
+      "timezone": "Asia/Shanghai",
+      "catchUpOnRestart": true
+    },
+    "provider": "",
+    "model": "",
+    "reasoningEffort": "off"
+  },
   "bridge": {
     "maxTextChars": 16000,
     "maxReplyChars": 2000,

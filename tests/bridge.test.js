@@ -42,7 +42,7 @@ test('MVP workflow creates a real Agent prompt, collects text only, then replies
   assert.ok(!JSON.stringify(f.store.db.prepare('SELECT * FROM events').all()).includes('SECRET'));
   await f.engine.sendOne(); assert.equal(f.store.db.prepare('SELECT state FROM outbox').get().state, 'sent');
 });
-test('three related messages reuse one session; another user has an isolated identity', async t => {
+test('three related messages reuse one session; another sender has a separate active conversation', async t => {
   const f = fixture(t);
   for (let i = 1; i <= 3; i++) {
     f.ingest(incoming('context ' + i, 'a' + i)); const job = f.job('a' + i); await f.engine.submit(job);
@@ -53,7 +53,8 @@ test('three related messages reuse one session; another user has an isolated ide
   assert.deepEqual(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').map(c => c.args.content[0].text),
     [1, 2, 3].map(i => '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\ncontext ' + i));
   f.ingest(incoming('bob', 'b', 'bob')); await f.engine.submit(f.job('b'));
-  assert.equal(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').at(-1).args.content[0].text, 'bob');
+  assert.equal(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').at(-1).args.content[0].text,
+    '【微信发送者身份】\n当前与你对话的人是 微信用户 "bob"。\n\n【用户消息】\nbob');
   assert.notEqual(f.store.mapping('bot-test', 'alice').session, f.store.mapping('bot-test', 'bob').session);
 });
 test('new messages queue during inference and resume after completion', async t => {

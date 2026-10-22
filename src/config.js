@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BridgeError, requireLoopback } from './util.js';
+import { cognitiveConfig } from './cognitive/config.js';
 
 export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', env = process.env) {
   let input = {};
@@ -29,6 +30,7 @@ export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', en
     bridge: { maxTextChars: input.bridge?.maxTextChars ?? 16_000, maxReplyChars: input.bridge?.maxReplyChars ?? 2000,
       concurrency: input.bridge?.concurrency ?? 4, approvalTimeoutMs: input.bridge?.approvalTimeoutMs ?? 300_000,
       allowApprovals: input.bridge?.allowApprovals ?? false },
+    cognitive: cognitiveConfig(input.cognitive),
   };
   const u = requireLoopback(c.dsh.baseUrl);
   if (u.port === '3080') throw new BridgeError('working-dsh-refused', '3080 是工作 DSH 端口；请使用独立实例（默认 3088）');

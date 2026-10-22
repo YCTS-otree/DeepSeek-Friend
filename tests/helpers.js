@@ -27,6 +27,7 @@ export class FakeDsh extends EventEmitter {
 }
 export function fixture(t, { allowApprovals = false } = {}) {
   const config = loadConfig('config.example.json', {}); config.bridge.allowApprovals = allowApprovals;
+  config.cognitive.enabled = false; // Cognitive behavior has isolated fixtures; bridge regressions never touch real memory.
   const dir = path.resolve('.research/test-state'); fs.mkdirSync(dir, { recursive: true });
   config.dsh.cwd = path.join(dir, 'workspaces');
   const file = path.join(dir, randomUUID() + '.sqlite'); const store = new Store(file);
