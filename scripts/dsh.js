@@ -6,7 +6,7 @@ import { loadConfig } from '../src/config.js';
 import { secureDirectory, saveCredentials } from '../src/security.js';
 import { DshClient } from '../src/dsh.js';
 import { log } from '../src/util.js';
-import { profileArguments } from './runtime-options.js';
+import { profileArguments, apiKeyEnvironment } from './runtime-options.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = path.join(root, '.runtime');
@@ -34,7 +34,9 @@ async function main() {
   const overlay = path.join(runtime, 'weixin-resolved.patch.yml');
   fs.writeFileSync(overlay, fs.readFileSync(path.join(root, 'dsh/weixin.patch.yml'), 'utf8')
     .replace('__WEIXIN_POLICY__', JSON.stringify(pathToFileURL(path.join(root, 'dsh/weixin-policy.js')).href)));
-  const env = { ...process.env, DSH_HOME: home };
+  const credentials = apiKeyEnvironment(root);
+  const env = { ...credentials.env, DSH_HOME: home };
+  if (credentials.loaded) log('dsh.api-key-loaded');
   delete env.DSH_WEB_URL; delete env.DSH_LAUNCH_TOKEN; delete env.DSH_COOKIE;
   const child = spawn(process.execPath, [path.join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'),
     ...profileArguments(home), '--patch', overlay,
@@ -70,4 +72,7 @@ async function main() {
     child.once('exit', (code, signal) => { clearTimeout(warning); text = ''; if (code && !signal) { log('dsh.exited', { code: 'exit-' + code }); process.exitCode = code; } resolve(); });
   });
 }
-main().catch(() => { console.error('独立 DSH 启动/安装失败。检查 .runtime 安装版本、3088 端口以及 docs/operations.md。'); process.exitCode = 1; });
+main().catch(e => {
+  if (['deepseek-key-file-missing', 'deepseek-key-file-invalid'].includes(e.code)) log('dsh.failed', { code: e.code });
+  console.error('独立 DSH 启动/安装失败。检查 API Key 文件、.runtime 安装版本、3088 端口以及 docs/operations.md。'); process.exitCode = 1;
+});

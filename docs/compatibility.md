@@ -1,6 +1,6 @@
 # 兼容性边界
 
-记录日期：2026-10-22；Bridge：1.0.0。
+记录日期：2026-10-22；Bridge：1.0.1。
 
 | 对象 | 依据 | 状态 |
 | --- | --- | --- |
@@ -28,6 +28,8 @@ RPC 是 `POST /api/<namespace>/<method>`，外层 `{type:'client-request',rpcId,
 Preset 注册是 Cordis `@deepseek-ai/dsh-agent-preset` 声明，不是旧 `.agent-presets/` 目录扫描。启动器在自己的 home 中初始化 `weixin` profile，应用项目 patch。自定义策略模块以 **file URL** 交给 ESM Loader，兼容 Windows 盘符；插件加载失败会使 Preset 不可用，Bridge 拒绝启动。
 
 DSH Cookie 仍代表本机操作者，没有在此版本验证过仅会话级专用 API Token。Bridge 通过独立实例、有限 RPC 用途、白名单、预设工具隔离控制暴露范围，不能声称服务端凭证本身具有细粒度权限。没有实现读取签名私钥或离线伪造 Cookie 的兼容路径。
+
+1.0.1 增加 API Key 文件启动接入。已核对 DSH `dsh-llm-deepseek-api-key` 的 provider=`deepseek-official` 与 `DEEPSEEK_API_KEY` 凭证引用；独立默认模型为 `deepseek-flash`。用用户明确确认类型的 API Key，通过真实 `session/prompt` 和事件流验证了 Agent 正常完成及预期回复，未直接绕过 DSH 调模型。
 
 ## iLink 适配
 

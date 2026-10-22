@@ -1,6 +1,6 @@
 {
   "name": "deepseek-friend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "独立微信 iLink ↔ DeepSeek Harness Bridge",
   "type": "module",

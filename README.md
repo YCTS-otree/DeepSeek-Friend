@@ -1,6 +1,6 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.0.0**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
+版本 **1.0.1**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
 
@@ -25,7 +25,19 @@ npm run dsh:start -- --open
 
 `dsh:setup` 使用仓库中锁定的 DSH 依赖树，安装到 `.runtime/node_modules/`，不安装 Node、Python、SDK 或编译器。依赖安装脚本默认禁用；本项目的文本 Preset 不要求额外原生构建。若你的系统缺少运行依赖，请先决定项目内或系统安装方式，不要盲目开启所有安装脚本。
 
-保持 DSH 终端运行。`--open` 会将官方启动 URL 直接交给浏览器，**终端不会打印完整启动 Token**。在该独立 DSH 页面配置模型提供方/登录；这些凭证由 DSH 自行管理。浏览器中的普通 DSH 操作仍属于本机操作者，请选择 `weixin` Preset。
+保持 DSH 终端运行。`--open` 会将官方启动 URL 直接交给浏览器，**终端不会打印完整启动 Token**。若没有 API Key 文件，可在该独立 DSH 页面配置模型提供方/登录。浏览器中的普通 DSH 操作仍属于本机操作者，请选择 `weixin` Preset。
+
+### DeepSeek API Key 文件
+
+独立启动器默认读取项目根目录的 **`DEEPSEEK_FRIEND.key`**，该文件仅用于已经确认为 DeepSeek API Key 的纯文本凭证（`sk-...`，允许末尾换行/BOM）。存在时只在内存中读取并传给独立 DSH 子进程的 `DEEPSEEK_API_KEY` 环境变量，不写入源码、配置模板或日志。模型调用仍由 DSH 官方 `deepseek-official` 适配器执行。
+
+自定义位置可设置 `DEEPSEEK_FRIEND_KEY_FILE`；显式路径不存在或格式错误时拒绝启动，不打印文件内容。默认文件不存在时保留原来的网页/环境变量配置方式。请限制该 API Key 文件本身的访问权限；不要将签名私钥放入该入口。`.key` 文件已被 Git 忽略，发布包不会包含它。
+
+```powershell
+# 可选，默认已查找项目根目录的 DEEPSEEK_FRIEND.key：
+$env:DEEPSEEK_FRIEND_KEY_FILE = 'G:\Python\Python\Py_project\DS_Friend\DEEPSEEK_FRIEND.key'
+npm run dsh:start
+```
 
 启动器通过 DSH 官方根路径的 launch-token 交换获得 Cookie，安全保存到 `data/dsh-connection.json`。Bridge 自动读取它；无须自行铸造 Cookie，也不读取任何签名密钥。然后在第二个终端：
 
@@ -136,9 +148,9 @@ Remove-Item Env:RUN_DSH_PROTOCOL
 
 自动化覆盖文本全链路 Mock、三轮 Session 复用、用户隔离、重复推送、原子游标、DSH 超时重试、快照回补、发送结果未知、账号锁、扫码验证/过期/跳转、授权失效、审批所有者/调用绑定、澄清期间排队和取消清理。
 
-**真实微信 A–E 场景仍需扫码账号与独立 DSH 模型凭证验收。** 不能将 Mock 或真实 DSH 协议测试视为微信端到端通过。完整结果见 [测试报告](docs/testing.md)；接口与兼容边界见 [调研记录](docs/research.md) 和 [兼容性](docs/compatibility.md)。
+**真实微信 A–E 场景仍需扫码账号验收。** 已用用户提供的 API Key 通过独立 DSH Session 完成一次真实模型响应验证；这不等于微信端到端通过。完整结果见 [测试报告](docs/testing.md)；接口与兼容边界见 [调研记录](docs/research.md) 和 [兼容性](docs/compatibility.md)。
 
-生成发布源代码包：`npm run release`，输出 `Release/v1.0.0/`，已存在的版本目录拒绝覆盖。
+生成发布源代码包：`npm run release`，输出 `Release/v1.0.1/`，已存在的版本目录拒绝覆盖。
 
 ## 限制与扩展
 

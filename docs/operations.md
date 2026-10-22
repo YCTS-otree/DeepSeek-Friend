@@ -8,12 +8,15 @@
 
 Windows DPAPI 与当前 Windows 用户绑定。请使用同一用户运行 DSH、Bridge 和登录命令；不同用户不能解密彼此凭证。重新启动项目 DSH 会重新保存该用户可用的 DSH Cookie。微信凭证跨用户迁移时需要重新扫码，不要复制工作 DSH 的密钥。
 
+独立启动器从项目根目录 `DEEPSEEK_FRIEND.key` 或显式 `DEEPSEEK_FRIEND_KEY_FILE` 读取已确认的 DeepSeek API Key，只传入 DSH 子进程环境。替换 API Key 文件后需重启独立 DSH。不会扫描其他凭证文件或打印 Key；签名私钥禁止用于此入口。默认文件不存在时仍可在独立 DSH 页面配置模型。该 API Key 文件本身应由操作者限制权限。
+
 ## 常见错误
 
 | 错误码 | 处理 |
 | --- | --- |
 | `dsh-auth-required` | 先运行独立 DSH 启动器；自动保存 connection 后重启 Bridge |
 | `dsh-auth-rejected` | Cookie 过期或错误实例；重启独立启动器/Bridge，或更换显式环境凭证 |
+| `deepseek-key-file-missing` / `deepseek-key-file-invalid` | 检查显式 API Key 路径与纯文本 sk- 格式；勿在终端打印凭证 |
 | `dsh-preset-missing` | 确认项目 patch 已应用；用独立 DSH 页面查看 weixin Preset 诊断，不要改工作实例 |
 | `dsh-network` / `dsh-stream-network` | 检查 3088 实例与网络；重试保持 requestId，勿手动重复发送原消息 |
 | `session/not-found` / `dsh-event-gap` | 任务保留 review；核对 DSH 状态后从微信 `/reset`；不会自动改为另一用户 Session |
