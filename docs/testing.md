@@ -1,14 +1,17 @@
 # 测试与验收报告
 
-日期：2026-10-22；Bridge 1.0.2；Windows；Node 24.19.0；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。
+日期：2026-10-22；Bridge 1.1.0；Windows；Node 24.19.0；Python 3.10.11；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。
 
 ## 已执行结果
 
 | 检查 | 结果与范围 |
 | --- | --- |
 | `npm run check` | src、scripts、tests、DSH 策略模块的 JavaScript 语法检查通过 |
-| `RUN_DSH_PROTOCOL=1 npm test` | 47 项通过，0 失败、0 跳过；其中 46 项为本机自动化/Mock、1 项连接真实独立 DSH；本次以实际 Administrator 账号运行 |
-| 默认 `npm test` | 同一套测试，真实 DSH 用例在未显式启用时跳过，不伪报成功 |
+| 默认 `npm test` | 49 项通过，0 失败，1 项真实 DSH 用例未显式启用时跳过 |
+| `RUN_DSH_PROTOCOL=1 node --test tests/dsh-live.test.js` | 真实独立 DSH 协议用例通过；本次以实际 Administrator 账号、Python 启动器管理的 DSH 运行 |
+| `python -W error::ResourceWarning -m unittest discover -s tests -p "test_*.py"` | 15 项通过，0 失败、0 跳过；包含本机现有 OpenCV 对 QR 模块的实际解码，不新增 Python 依赖 |
+| Python 集成启动器真实启停 | 连续两次启动独立 DSH → 获取官方 iLink QR → 内存解码成功 → 停止自己创建的进程成功；未手机扫码 |
+| Web UI 浏览器验证 | 桌面及 390px 窄屏检查通过，无横向溢出；两种尺寸的真实浏览器截图均被 OpenCV 成功解码（假 QR payload）；启停/验证码 Mock 交互通过，浏览器错误日志为空 |
 | Bridge `npm audit --omit=dev` | 0 个已知漏洞 |
 | 独立 runtime `npm audit --prefix .runtime` | 修复依赖锁定后为 0 个已知漏洞；初始为 5 high / 7 moderate（包括向上归因），修复记录见 compatibility.md |
 | DSH 锁文件 `npm ci --prefix .runtime --dry-run` | 已验证锁文件可被 npm 接受；实际独立安装并成功启动 |
@@ -30,6 +33,7 @@
 - **平台保护**：Windows 账号命名管道锁和 data SQLite 锁；DPAPI 假凭证往返，磁盘无假凭证的明文；日志忽略任意敏感字段；启动配置拒绝工作 DSH 3080。
 - **API Key 入口**：默认与自定义文件、BOM/换行、原始环境不被修改、显式缺失和格式/大小不合法拒绝；自动化仅使用假凭证，真实凭证不进入测试代码或输出。
 - **Windows ACL 回归**：数值 SID、显式项目所有者权限、重复检查、禁止宽泛用户组、文件写入，以及拒绝访问错误码和原始 stderr 不泄漏；真实用户普通权限下的启动另有上表实测。
+- **集成 Web UI**：严格黑白 SVG、四模块留白、二维码刷新/清除、验证码 ID 与数字校验、stdin EOF 取消、假 Node 子进程完整启停/重新授权/再启动、外部端口拒绝接管、DSH 退出通知 Bridge、Cookie/一次性票据、Origin/Host/CSRF、请求大小和静态文件白名单。HTTP 不公开配置、API Key 或 DSH 运行凭证。
 
 ## 真实 DSH 协议测试的边界
 

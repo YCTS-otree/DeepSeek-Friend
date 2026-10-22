@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepSeek:Friend · 本地控制台</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<div class="shell">
+  <header><div class="brand"><span class="mark" aria-hidden="true">D<span>f</span></span><div><strong>DeepSeek:Friend</strong><p>微信与 Agent 的连接，从这里开始。</p></div></div><span class="local"><i></i> 仅在本机运行</span></header>
+  <main>
+    <section class="intro"><div><span class="eyebrow">WEIXIN × DEEPSEEK HARNESS</span><h1>让微信，连上你的 Agent。</h1><p>启动服务，用手机微信扫描下方二维码，再回到微信开始对话。</p></div><span id="version" class="version"></span></section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <div class="grid">
+      <section class="card login-card" aria-labelledby="login-title">
+        <div class="card-head"><div><span class="step">01 / 微信授权</span><h2 id="login-title">连接你的微信</h2></div><span id="login-badge" class="badge">尚未启动</span></div>
+        <div class="qr-area">
+          <div id="placeholder" class="placeholder"><div class="qr-symbol" aria-hidden="true">▦</div><h3 id="placeholder-title">准备好后，启动服务</h3><p id="placeholder-text">二维码会显示在这里，无需在终端扫码。</p></div>
+          <img id="qr" class="qr" alt="微信登录二维码，请用手机微信扫一扫" hidden>
+          <form id="verify-form" hidden><span class="verify-icon" aria-hidden="true">#</span><h3>输入微信验证码</h3><p>请填写手机微信上显示的数字。</p><label for="verify-code">验证码</label><input id="verify-code" name="code" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" autocomplete="one-time-code" required><button class="button primary" type="submit">提交验证码</button></form>
+        </div>
+        <p id="login-note" class="login-note" aria-live="polite">凭证保存在本机，已授权后启动会自动恢复连接。</p>
+        <div class="login-footer"><span>请使用微信「扫一扫」</span><button id="relogin" class="text-button" data-action="login" disabled>重新扫码 / 刷新</button></div>
+      </section>
+      <div class="right-column">
+        <section class="card services" aria-labelledby="services-title"><div class="card-head"><div><span class="step">02 / 服务控制</span><h2 id="services-title">一处启动，持续连接</h2></div></div>
+          <div class="service-row"><span class="service-icon" aria-hidden="true">D</span><div><strong>独立 DSH</strong><p id="dsh-address">127.0.0.1:3088</p></div><span id="dsh-state" class="service-state">已停止</span></div>
+          <div class="service-row"><span class="service-icon weixin" aria-hidden="true">↔</span><div><strong>微信 Bridge</strong><p>文本消息 · 会话恢复</p></div><span id="bridge-state" class="service-state">已停止</span></div>
+          <div class="controls"><button id="start" class="button primary" data-action="start">启动服务 <span aria-hidden="true">↗</span></button><button id="stop" class="button secondary" data-action="stop" disabled>停止</button></div>
+          <button id="open-dsh" class="text-button dsh-link" data-action="open-dsh" disabled>打开 DSH 管理页面 <span aria-hidden="true">↗</span></button>
+        </section>
+        <section class="card guide"><span class="step">接下来</span><h2>在微信里，说一声「你好」</h2><p>授权成功后直接发消息。多轮对话和工具权限由独立 DSH 管理，同一会话会在重启后继续。</p><div class="guide-note"><span aria-hidden="true">⌁</span> 工作中的 DSH 与此项目独立运行。</div></section>
+      </div>
+    </div>
+    <section class="card activity"><div class="activity-head"><div><span class="step">运行记录</span><h2>连接动态</h2></div><span id="connection" class="connection">正在连接控制台…</span></div><div id="logs" class="logs" role="log" aria-label="脱敏运行记录"><p class="empty-log">尚无运行记录。启动服务后将在这里显示状态。</p></div></section>
+  </main>
+  <footer><span>本地凭证 · 独立会话 · 官方 iLink 通道</span><button id="quit" class="text-button">退出启动器</button></footer>
+</div>
+<script src="/app.js" defer></script>
+</body></html>

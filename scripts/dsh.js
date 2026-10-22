@@ -7,6 +7,7 @@ import { secureDirectory, saveCredentials } from '../src/security.js';
 import { DshClient } from '../src/dsh.js';
 import { log } from '../src/util.js';
 import { profileArguments, apiKeyEnvironment } from './runtime-options.js';
+import { LauncherIO } from '../src/launcher-io.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = path.join(root, '.runtime');
@@ -30,6 +31,12 @@ async function main() {
   if (!fs.existsSync(installed)) throw new Error('dsh-not-installed; run npm run dsh:setup');
   if (JSON.parse(fs.readFileSync(installed, 'utf8')).version !== expectedVersion) throw new Error('dsh-version-mismatch');
   const c = loadConfig(); const home = path.join(runtime, 'home');
+  // A second wrapper must never adopt or overwrite the credentials of an occupied port.
+  const { createServer } = await import('node:net');
+  await new Promise((resolve, reject) => {
+    const probe = createServer(); probe.once('error', () => reject(Object.assign(new Error(), { code: 'dsh-port-in-use' })));
+    probe.listen(Number(new URL(c.dsh.baseUrl).port), '127.0.0.1', () => probe.close(resolve));
+  });
   secureDirectory(home); secureDirectory(c.dataDir); fs.mkdirSync(c.dsh.cwd, { recursive: true });
   const overlay = path.join(runtime, 'weixin-resolved.patch.yml');
   fs.writeFileSync(overlay, fs.readFileSync(path.join(root, 'dsh/weixin.patch.yml'), 'utf8')
@@ -41,7 +48,15 @@ async function main() {
   const child = spawn(process.execPath, [path.join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'),
     ...profileArguments(home), '--patch', overlay,
     '--host', '127.0.0.1', '--port', new URL(c.dsh.baseUrl).port, '--no-open'],
-  { cwd: c.dsh.cwd, env, stdio: ['inherit', 'pipe', 'pipe'], windowsHide: true });
+  { cwd: c.dsh.cwd, env, stdio: [process.env.BRIDGE_LAUNCHER === '1' ? 'ignore' : 'inherit', 'pipe', 'pipe'], windowsHide: true });
+  let launchUrl; let stopping = false;
+  const stop = () => { stopping = true; child.kill(); };
+  const open = async () => {
+    if (!launchUrl) return;
+    const opener = await import(pathToFileURL(path.join(runtime, 'node_modules/open/index.js')).href);
+    await opener.default(launchUrl);
+  };
+  const ui = process.env.BRIDGE_LAUNCHER === '1' ? new LauncherIO({ shutdown: stop, open }) : null;
   let authenticated = false; let text = ''; let connecting = false;
   async function inspect(chunk) {
     text = (text + chunk.toString()).slice(-16_000);
@@ -54,10 +69,10 @@ async function main() {
       await client.auth();
       saveCredentials(c.dataDir, { baseUrl: c.dsh.baseUrl, cookie: client.cookie }, 'dsh-connection.json');
       authenticated = true; text = ''; log('dsh.independent-ready', { version: expectedVersion });
+      launchUrl = new URL('/?token=' + encodeURIComponent(match[1]), c.dsh.baseUrl).href;
       if (process.argv.includes('--open')) {
-        const opener = await import(pathToFileURL(path.join(runtime, 'node_modules/open/index.js')).href);
         // Open directly; never print the credential-bearing URL to terminal output or log files.
-        await opener.default(new URL('/?token=' + encodeURIComponent(match[1]), c.dsh.baseUrl).href);
+        await open();
       }
     } catch (e) { log('dsh.connection-failed', { code: e.code ?? 'auth' }); }
     finally { connecting = false; }
@@ -66,11 +81,12 @@ async function main() {
   child.stderr.on('data', chunk => { inspect(chunk).catch(() => log('dsh.launch-output-error')); });
   // DSH diagnostics can contain credentials; expose only an operational marker.
   const warning = setTimeout(() => { if (!authenticated) log('dsh.startup-pending', { code: 'no-auth-url-yet' }); }, 30_000);
-  for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => child.kill(sig));
+  for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, stop);
   await new Promise((resolve, reject) => {
     child.once('error', reject);
-    child.once('exit', (code, signal) => { clearTimeout(warning); text = ''; if (code && !signal) { log('dsh.exited', { code: 'exit-' + code }); process.exitCode = code; } resolve(); });
+    child.once('exit', (code, signal) => { clearTimeout(warning); text = ''; launchUrl = null; if (code && !signal && !stopping) { log('dsh.exited', { code: 'exit-' + code }); process.exitCode = code; } resolve(); });
   });
+  ui?.close();
 }
 main().catch(e => {
   const known = ['dsh-not-installed', 'dsh-version-mismatch', 'npm-cli-not-found', 'dsh-install-failed', 'runtime-path-invalid'];

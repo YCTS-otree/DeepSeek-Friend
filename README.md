@@ -1,8 +1,26 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.0.2**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
+版本 **1.1.0**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
+
+## 推荐：Python 集成 Web 启动器
+
+已有依赖安装完成后，**双击 `start-web.bat`**，或在 PowerShell 执行：
+
+```powershell
+.\start-web.bat
+```
+
+浏览器会自动打开本地控制台（默认 `127.0.0.1:3090`）。点击 **启动服务**，它会依次启动项目内独立 DSH（3088）和微信 Bridge；首次授权时网页自动显示清晰的黑白二维码。用手机微信「扫一扫」并确认，必要时在网页输入手机显示的验证码。之后从微信发消息即可。登录二维码使用 SVG 图片、正方形模块及四模块留白，不受终端字体和 PowerShell 颜色影响；过期自动刷新，也可以点击「重新扫码 / 刷新」。
+
+提供启停、授权状态、脱敏运行记录及「打开 DSH 管理页面」。关闭浏览器标签不会结束服务；点击「退出启动器」或在启动器终端按 Ctrl+C 才会停止它管理的 Bridge 和独立 DSH。原有凭证、消息数据库与会话映射继续复用。**若原终端的 `npm start` / `npm run dsh:start` 仍在运行，请先按 Ctrl+C 停止**；启动器不会结束其他实例。
+
+启动器仅需 **Python 3.10+ 标准库**，无需 pip 安装、Flask 或新虚拟环境。Windows 脚本优先使用 `DEEPSEEK_FRIEND_PYTHON` 指定解释器，其次使用本机已有的 `G:\Python\Python_Environment\Python310\python.exe`，其他机器回退到 PATH 中的 `python`。也可跨平台执行 `python launcher.py --port 3090`。请使用原先授权的 Windows 用户运行，DPAPI 凭证不能跨用户解密。
+
+页面仅绑定 `127.0.0.1`；浏览器自动打开链接交换一次性登录票据，随后清理地址栏。控制接口校验会话 Cookie、Host、Origin 和 CSRF；二维码和验证码仅在本地内存/专用 IPC 中使用，不进入运行记录。不要转发此端口或把该页面部署到公网。此页面只管理本机连接，不是聊天前端。内部 DSH Web UI 仍由 DSH 本身提供。
+
+如果尚未安装依赖，先完成下节的 `npm ci` 和 `npm run dsh:setup`。首次没有 API Key 文件时，可通过「打开 DSH 管理页面」配置独立实例的模型。
 
 ## 环境与隔离
 

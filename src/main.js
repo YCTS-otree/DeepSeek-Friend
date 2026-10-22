@@ -11,17 +11,23 @@ import { DshClient } from './dsh.js';
 import { Engine } from './engine.js';
 import { login } from './auth.js';
 import { BridgeError, VERSION, log } from './util.js';
+import { LauncherIO } from './launcher-io.js';
 
 const controller = new AbortController();
-for (const event of ['SIGINT', 'SIGTERM']) process.once(event, () => { log('bridge.stopping'); controller.abort(); });
+let stoppingRequested = false;
+const stop = () => { stoppingRequested = true; controller.abort(); };
+const ui = process.env.BRIDGE_LAUNCHER === '1' ? new LauncherIO({ shutdown: stop }) : null;
+for (const event of ['SIGINT', 'SIGTERM']) process.once(event, () => { log('bridge.stopping'); stop(); });
 
 async function doLogin(config, old) {
   const client = new IlinkClient(config.weixin);
   const result = await login(client, {
     signal: controller.signal, existing: old,
-    display: content => { process.stdout.write('请用手机微信扫描二维码并确认授权（二维码仅用于当前登录）：\n'); qrcode.generate(content, { small: true }); process.stdout.write(content + '\n'); },
-    notice: text => process.stdout.write(text + '\n'),
+    display: content => { if (ui) return ui.qr(content); process.stdout.write('请用手机微信扫描二维码并确认授权（二维码仅用于当前登录）：\n'); qrcode.generate(content, { small: true }); process.stdout.write(content + '\n'); },
+    notice: text => { if (!ui) process.stdout.write(text + '\n'); },
+    status: state => ui?.emit('ui.login', { state }),
     verify: async signal => {
+      if (ui) return ui.verify(signal);
       if (!process.stdin.isTTY) throw new BridgeError('verification-needs-tty', '请输入手机验证码，需交互式终端');
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       try {
@@ -88,7 +94,7 @@ async function main() {
   } finally { controller.abort(); if (unlockAccount) await unlockAccount(); store?.close(); release(); }
 }
 main().catch(e => {
-  if (!controller.signal.aborted || e.name !== 'AbortError') {
+  if (!stoppingRequested) {
     const messages = {
       'dsh-auth-required': '请先在另一个终端运行 npm run dsh:start，等待 dsh.independent-ready，再运行 npm start。',
       'dsh-auth-rejected': '独立 DSH 连接凭证失效。请先重启 npm run dsh:start，再重启 Bridge；显式环境凭证也需检查。',
@@ -106,4 +112,4 @@ main().catch(e => {
     log('bridge.failed', { code: e.code ?? 'internal' });
     console.error(messages[e.code] ?? '启动或运行失败，请按错误码查阅 docs/operations.md。'); process.exitCode = 1;
   }
-});
+}).finally(() => ui?.close());

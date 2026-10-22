@@ -9,3 +9,5 @@ coverage/
 *.key
 Release/
 .runtime/
+__pycache__/
+*.pyc

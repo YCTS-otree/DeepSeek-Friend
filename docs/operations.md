@@ -2,6 +2,8 @@
 
 ## 进程与运行目录
 
+推荐双击 `start-web.bat`，在自动打开的本地 Web UI 点击「启动服务」。Python 统一管理本项目独立 DSH 与 Bridge，网页显示可扫描的 SVG 二维码和验证码交互；详细控制、安全与恢复规则见 [web-launcher.md](web-launcher.md)。切换前先停止旧终端实例。关闭标签页继续运行，「退出启动器」或终端 Ctrl+C 才停止服务。
+
 两个终端分别运行 `npm run dsh:start -- --open` 与 `npm start`。所有 DSH 状态均在项目 `.runtime/home`；不使用系统默认 `~/.dsh`。只有首次创建 profile 时使用 `--from-default-profile web`，随后复用；重启不得覆盖模型配置。包装器捕获自己的子进程启动凭证并做官方交换，不输出完整 Token，也不扫描历史日志。
 
 账号锁使用 Windows 命名管道 / Linux 抽象域套接字：同一账号即使使用不同 data 目录也不能同时轮询。data 目录还有独立 SQLite 排他锁；进程退出后由操作系统释放，不依赖删除陈旧 PID 文件。该账号锁防止本机本项目实例竞争，不能阻止另一台电脑或不遵守同一锁协议的程序接入。
