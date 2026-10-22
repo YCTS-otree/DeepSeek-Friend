@@ -44,11 +44,20 @@ function service(t) {
 
 test('initial identity is minimal, stable across reopen and independent of Session/model names', t => {
   const f = fixture(t); const scope = f.store.scope('a', 'u'); const before = f.store.current(scope);
-  assert.ok(SELF_FIELDS.every(k => before.model[k].length === 0));
+  assert.ok(SELF_FIELDS.filter(k => k !== 'selfPortrait').every(k => before.model[k].length === 0));
+  assert.equal(before.model.selfPortrait[0].origin, 'OTREE-bootstrap-v0.1.0');
   f.store.bind(scope, 'session-A'); f.store.bind(scope, 'session-B');
   const again = new CognitiveStore(f.dir);
   try { assert.deepEqual(again.current(scope), before); assert.equal(again.scope('a', 'u'), scope); assert.equal(again.scope('a', 'other'), scope); }
   finally { again.close(); }
+});
+test('reading an Agent-authored room note does not promote self narration to tool-verified evidence', t => {
+  const f = service(t);
+  f.s.event('foreground', { seq: 1, type: 'tool/call', data: { name: 'room_read', callId: 'room-note', arguments: '{"path":"note.md"}' } }, 'turn');
+  f.s.event('foreground', { seq: 2, type: 'tool/result', data: { message: { toolCallId: 'room-note', content: [{ type: 'text', text: '我是严谨的人。' }] } } }, 'turn');
+  const row = f.store.db.prepare("SELECT source FROM raw_events WHERE seq='2'").get();
+  assert.equal(row.source, 'assistant_narrative');
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM raw_events WHERE source='observed_outcome'").get().n, 0);
 });
 test('Self commit is versioned, evidence-backed, idempotent and writes readable mirrors', t => {
   const f = fixture(t); const scope = f.store.scope('a', 'u'); const m = memory(f.store, scope, 1);

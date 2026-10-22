@@ -42,6 +42,13 @@ if (command === 'help') {
       const file = path.join(dir, scope + '-' + Date.now() + '.json'); fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 }); result = { file, private: true };
     } else if (['forget-event', 'forget-scope'].includes(command)) {
       if (!process.argv.includes('--confirm')) throw new Error('cognitive-confirm-required');
+      const historyFile = path.join(c.dataDir, 'bridge.sqlite');
+      if (fs.existsSync(historyFile)) {
+        const bridge = new Store(historyFile, { readOnly: true });
+        try { if (bridge.db.prepare("SELECT 1 FROM sqlite_master WHERE name='chat_entries'").get()
+          && bridge.db.prepare('SELECT 1 FROM chat_entries LIMIT 1').get()) throw new Error('cognitive-chat-retention-archive-only'); }
+        finally { bridge.close(); }
+      }
       const url = new URL(c.dsh.baseUrl);
       const active = await new Promise(resolve => { const socket = net.connect({ host: url.hostname, port: Number(url.port) });
         socket.setTimeout(1000); socket.once('connect', () => { socket.destroy(); resolve(true); });

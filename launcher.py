@@ -18,6 +18,7 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
@@ -45,6 +46,7 @@ class Controller:
         self.closed = False
         self.commands = queue.Queue()
         self.logs = collections.deque(maxlen=80)
+        self.session_requests = {}
         self.state = {"version": VERSION, "dsh": "stopped", "bridge": "stopped",
                       "login": "idle", "verifyId": None, "qrRevision": 0,
                       "busy": False, "error": None, "baseUrl": "http://127.0.0.1:3088"}
@@ -167,6 +169,14 @@ class Controller:
 
     def _event(self, name, data):
         event = data.get("event", "")
+        if name == "bridge" and event == "ui.sessions":
+            pending = self.session_requests.get(data.get("id"))
+            if pending:
+                try:
+                    pending.put_nowait(data)
+                except queue.Full:
+                    pass
+            return
         if name == "bridge" and event == "ui.qr":
             svg = data.get("svg", "")
             # Only our deterministic black/white SVG encoder may supply this IPC field.
@@ -264,6 +274,45 @@ class Controller:
                 raise LauncherError("bridge-not-running")
             self.state.update(verifyId=None, login="confirming")
 
+    def sessions(self, action, args=None):
+        if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive"} or (args is not None and not isinstance(args, dict)):
+            raise LauncherError("session-action-invalid")
+        request_id = str(uuid.uuid4())
+        pending = queue.Queue(maxsize=1)
+        with self.lock:
+            if self.closed or self.state["busy"]:
+                raise LauncherError("launcher-busy")
+            alive = self._alive("bridge")
+            if alive:
+                self.session_requests[request_id] = pending
+        if alive:
+            try:
+                if not self._send("bridge", {"command": "sessions", "id": request_id, "action": action, "args": args or {}}):
+                    raise LauncherError("bridge-not-ready")
+                try:
+                    data = pending.get(timeout=8)
+                except queue.Empty:
+                    raise LauncherError("session-result-unknown")
+            finally:
+                with self.lock:
+                    self.session_requests.pop(request_id, None)
+        else:
+            node = shutil.which("node")
+            if not node:
+                raise LauncherError("node-not-found")
+            try:
+                result = subprocess.run([node, "scripts/sessions.js"], cwd=self.root,
+                                        input=json.dumps({"action": action, "args": args or {}}),
+                                        capture_output=True, text=True, encoding="utf-8", timeout=12,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                data = json.loads(result.stdout)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                raise LauncherError("session-result-unknown")
+        if data.get("error"):
+            code = data["error"]
+            raise LauncherError(code if isinstance(code, str) and CODE_RE.fullmatch(code) else "session-operation-failed")
+        return data.get("result", {})
+
     def _stop_child(self, name):
         with self.lock:
             child = self.children.get(name)
@@ -350,7 +399,10 @@ class Handler(BaseHTTPRequestHandler):
                             **(headers or {})}.items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass  # A closed/reloaded tab is not a service failure; do not print its request.
 
     def _host_ok(self):
         return self.headers.get("Host") == urlsplit(self.server.origin).netloc
@@ -411,6 +463,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.controller.verify(data.get("id"), data.get("code"))
             elif self.path == "/api/action":
                 self.server.controller.enqueue(data.get("action"))
+            elif self.path == "/api/sessions":
+                return self._reply(200, self.server.controller.sessions(data.get("action"), data.get("args")))
             elif self.path == "/api/quit":
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
             else:

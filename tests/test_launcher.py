@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 import unittest
+import tempfile
+import os
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -68,6 +70,35 @@ class StateTests(unittest.TestCase):
         snapshot = json.dumps(self.c.snapshot())
         self.assertNotIn("not-a-real-token", snapshot)
         self.assertNotIn("secret.example", snapshot)
+
+    def test_session_ipc_routes_private_history_only_to_the_waiting_request(self):
+        def reply(_name, message):
+            self.c._event("bridge", {"event": "ui.sessions", "id": message["id"], "result": {"entries": [{"text": "private-test-history"}]}})
+            return True
+        with patch.object(self.c, "_alive", return_value=True), patch.object(self.c, "_send", side_effect=reply):
+            self.assertEqual(self.c.sessions("history", {"session": "fixture"})["entries"][0]["text"], "private-test-history")
+        self.assertNotIn("private-test-history", json.dumps(self.c.snapshot()))
+        self.assertEqual(self.c.session_requests, {})
+
+    def test_stopped_service_session_management_is_persistent_and_isolated(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".research") as temp:
+            config = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+            config["dataDir"] = str(Path(temp) / "data")
+            file = Path(temp) / "config.json"
+            file.write_text(json.dumps(config), encoding="utf-8")
+            with patch.dict(os.environ, {"BRIDGE_CONFIG": str(file)}):
+                first = self.c.sessions("create", {"title": "第一段对话"})["session"]
+                second = self.c.sessions("create", {"title": "第二段对话"})["session"]
+                self.assertNotEqual(first, second)
+                self.c.sessions("switch", {"session": first})
+                rows = self.c.sessions("list")["sessions"]
+                self.assertEqual(next(s for s in rows if s["archived"] == 0)["session"], first)
+                self.assertEqual(len(rows), 2)
+                with self.assertRaises(LauncherError):
+                    self.c.sessions("delete", {"session": second})
+                for bad in [[], {}, None]:
+                    with self.assertRaises(LauncherError):
+                        self.c.sessions(bad)
 
     def test_occupied_port_does_not_spawn_or_stop_external_process(self):
         import socket
@@ -206,6 +237,15 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/action", '{"action":"shell"}', h)[0], 409)
         self.assertEqual(self.request("POST", "/api/action", '{"action":[]}', h)[0], 409)
         self.assertEqual(self.request("GET", "/api/action", headers=h)[0], 404)
+
+    def test_session_history_requires_cookie_origin_and_csrf(self):
+        body = json.dumps({"action": "history", "args": {"session": "fixture"}})
+        self.assertEqual(self.request("POST", "/api/sessions", body, {"Content-Type": "application/json"})[0], 403)
+        with patch.object(self.c, "sessions", return_value={"entries": [{"role": "assistant", "text": "saved output"}]}) as sessions:
+            status, content, _ = self.request("POST", "/api/sessions", body, self.auth_headers())
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(content)["entries"][0]["text"], "saved output")
+            sessions.assert_called_once_with("history", {"session": "fixture"})
 
     def test_qr_is_image_not_in_state_and_cleared_on_stop(self):
         self.c._event("bridge", {"event": "ui.qr", "svg": qr_svg()})

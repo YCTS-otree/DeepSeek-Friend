@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { LauncherIO, qrSvg } from '../src/launcher-io.js';
+import { randomUUID } from 'node:crypto';
 
 test('QR SVG has square integer modules, four-module quiet zone and no URL text', () => {
   const svg = qrSvg('https://example.org/login?qr=fixture');
@@ -38,4 +39,18 @@ test('launcher stops on stdin EOF and aborts pending verification', async () => 
   const pending = ui.verify(ac.signal);
   input.end();
   await assert.rejects(pending, { name: 'AbortError' }); assert.equal(stopped, true);
+});
+
+test('session IPC exposes only the requested result and returns bounded error codes', async () => {
+  const input = new PassThrough(), output = new PassThrough(); let emitted = '';
+  output.on('data', chunk => { emitted += chunk; });
+  const ui = new LauncherIO({ input, output });
+  ui.sessions = (action, args) => { assert.equal(action, 'history'); return { entries: [{ role: 'assistant', text: args.session }] }; };
+  const id = randomUUID(); input.write(JSON.stringify({ command: 'sessions', action: 'history', args: { session: 'fixture' }, id }) + '\n');
+  await new Promise(resolve => setImmediate(resolve));
+  const result = JSON.parse(emitted.trim()); assert.equal(result.id, id); assert.equal(result.result.entries[0].text, 'fixture');
+  emitted = ''; ui.sessions = () => { throw Object.assign(Error('sensitive error body'), { code: 'session-busy' }); };
+  input.write(JSON.stringify({ command: 'sessions', action: 'create', id }) + '\n');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(JSON.parse(emitted.trim()).error, 'session-busy'); assert.ok(!emitted.includes('sensitive')); ui.close();
 });

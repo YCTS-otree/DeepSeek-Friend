@@ -1,12 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { textMessage } from './ilink.js';
+import { BridgeError } from './util.js';
+import { clean } from './cognitive/store.js';
 
 export class Store {
   constructor(file, { readOnly = false } = {}) {
     this.db = new DatabaseSync(file, { readOnly });
     if (readOnly) return;
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=3000;
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversations(account TEXT NOT NULL,user TEXT NOT NULL,session TEXT NOT NULL UNIQUE,cursor INTEGER NOT NULL DEFAULT -1,
         PRIMARY KEY(account,user));
@@ -23,6 +25,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS outbox_state ON outbox(state,retry_at,created);`);
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('schema','1')").run();
     if (this.get('schema') !== '1') throw new Error('unsupported database schema');
+    this.initSessions();
   }
   close() { this.db.close(); }
   tx(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const x = fn(); this.db.exec('COMMIT'); return x; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }
@@ -53,19 +56,102 @@ export class Store {
         const now = Date.now();
         const result = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,state,created,updated) VALUES(?,?,?,?,?,?,?,?,?)')
           .run(randomUUID(), account, user, String(m.message_id), payload, randomUUID(), state, now, now);
+        if (result.changes) {
+          const job = this.db.prepare('SELECT * FROM jobs WHERE account=? AND user=? AND message_id=?').get(account, user, String(m.message_id));
+          const sid = this.ensureMapping(account, user).session;
+          this.db.prepare('UPDATE jobs SET session=? WHERE id=?').run(sid, job.id);
+          this.chat('user:' + job.id, sid, 'user', { accountId: account, userId: user }, text, now, job.id);
+        }
         if (result.changes && state === 'rejected') this.reply({ account, user, payload }, '首版只接收非空文本消息，且需在长度限制内。', `unsupported:${account}:${user}:${m.message_id}`);
       }
       if (typeof response.get_updates_buf === 'string') this.set('cursor:' + account, response.get_updates_buf);
     });
   }
-  mapping(account, user) { return this.db.prepare('SELECT * FROM conversations WHERE account=? AND user=?').get(account, user); }
+  initSessions() {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS chat_sessions(session TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER NOT NULL,archived INTEGER NOT NULL DEFAULT 1,cursor INTEGER NOT NULL DEFAULT -1);
+      CREATE UNIQUE INDEX IF NOT EXISTS single_active_chat ON chat_sessions(archived) WHERE archived=0;
+      CREATE TABLE IF NOT EXISTS chat_entries(n INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,session TEXT NOT NULL REFERENCES chat_sessions(session),role TEXT NOT NULL,actor TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,job TEXT);
+      CREATE INDEX IF NOT EXISTS chat_history ON chat_entries(session,n);
+      CREATE TRIGGER IF NOT EXISTS preserve_chat_session BEFORE DELETE ON chat_sessions BEGIN SELECT RAISE(ABORT,'sessions-are-archived-not-deleted'); END;`);
+    if (!this.get('managed-sessions')) this.tx(() => {
+      const legacy = this.db.prepare('SELECT * FROM conversations ORDER BY rowid').all();
+      for (const row of legacy) this.db.prepare('INSERT OR IGNORE INTO chat_sessions VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, row.cursor);
+      // Jobs from interrupted turns keep their original Session; migration never moves a request.
+      for (const row of this.db.prepare('SELECT DISTINCT session FROM jobs WHERE session IS NOT NULL').all()) this.db.prepare('INSERT OR IGNORE INTO chat_sessions VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, -1);
+      const first = this.db.prepare("SELECT session FROM jobs WHERE session IS NOT NULL AND state IN ('submitting','waiting','review') ORDER BY created LIMIT 1").get()
+        ?? this.db.prepare('SELECT session FROM chat_sessions ORDER BY created,rowid LIMIT 1').get();
+      if (first) this.db.prepare('UPDATE chat_sessions SET archived=0 WHERE session=?').run(first.session);
+      for (const row of this.db.prepare("SELECT DISTINCT session FROM jobs WHERE session IS NOT NULL AND attempts>0").all()) this.set('dsh-created:' + row.session, '1');
+      this.set('managed-sessions', '1');
+    });
+    // One-time idempotent import of text-only public records. Preserve each legacy Session's event order.
+    if (!this.get('chat-history-imported')) this.tx(() => {
+      for (const s of this.db.prepare('SELECT session FROM chat_sessions').all()) {
+        const jobs = this.db.prepare('SELECT * FROM jobs WHERE session=? ORDER BY created,rowid').all(s.session);
+        const requests = new Map(jobs.map(j => [j.request_id, j])); let current;
+        const user = j => this.chat('user:' + j.id, s.session, 'user', { accountId: j.account, userId: j.user }, JSON.parse(j.payload).text, j.created, j.id);
+        for (const row of this.db.prepare("SELECT * FROM events WHERE session=? AND type IN ('user/message','assistant/message') ORDER BY seq").all(s.session)) {
+          const data = JSON.parse(row.data);
+          if (row.type === 'user/message') { current = requests.get(data.source?.rpcId); if (current) user(current); }
+          else this.chat('assistant:' + s.session + ':' + row.seq, s.session, 'assistant', {}, data.text, current?.updated ?? Date.now(), current?.id);
+        }
+        for (const j of jobs) user(j); // Also retain messages never admitted to DSH.
+      }
+      this.set('chat-history-imported', '1');
+    });
+  }
+  session(id) { return this.db.prepare('SELECT * FROM chat_sessions WHERE session=?').get(id); }
+  currentSession() { return this.db.prepare('SELECT * FROM chat_sessions WHERE archived=0').get(); }
+  mapping(account, user) { const row = this.currentSession(); return row && { ...row, account, user }; }
   ensureMapping(account, user) {
-    this.db.prepare('INSERT OR IGNORE INTO conversations(account,user,session) VALUES(?,?,?)').run(account, user, randomUUID());
+    if (!this.currentSession()) this.db.prepare('INSERT INTO chat_sessions VALUES(?,?,?,?,?)').run(randomUUID(), '最初的会话', Date.now(), 0, -1);
     return this.mapping(account, user);
+  }
+  chat(id, session, role, actor, text, created = Date.now(), job = null) {
+    if (!text || !session) return;
+    this.db.prepare('INSERT OR IGNORE INTO chat_entries(id,session,role,actor,text,created,job) VALUES(?,?,?,?,?,?,?)')
+      .run(id, session, role, JSON.stringify(actor), clean(text, 100000), created, job);
+  }
+  sessionControl(action, args = {}) {
+    if (action === 'list') return { sessions: this.db.prepare('SELECT s.*,(SELECT count(*) FROM chat_entries e WHERE e.session=s.session) AS messages FROM chat_sessions s ORDER BY archived,created DESC,rowid DESC').all() };
+    if (action === 'history') {
+      if (!this.session(args.session)) throw new BridgeError('session-not-found');
+      const before = Number.isSafeInteger(args.before) && args.before > 0 ? args.before : Number.MAX_SAFE_INTEGER;
+      const rows = this.db.prepare('SELECT * FROM chat_entries WHERE session=? AND n<? ORDER BY n DESC LIMIT 100').all(args.session, before);
+      const entries = []; let bytes = 0;
+      for (const row of rows) { const size = Buffer.byteLength(JSON.stringify(row)); if (entries.length && bytes + size > 750000) break; entries.push(row); bytes += size; }
+      entries.reverse();
+      return { entries: entries.map(e => ({ ...e, actor: JSON.parse(e.actor) })), hasMore: Boolean(entries.length && this.db.prepare('SELECT 1 FROM chat_entries WHERE session=? AND n<? LIMIT 1').get(args.session, entries[0].n)) };
+    }
+    if (!['create', 'switch', 'archive'].includes(action)) throw new BridgeError('session-action-invalid');
+    return this.tx(() => {
+      if (this.db.prepare("SELECT 1 FROM jobs WHERE state IN ('queued','backoff','submitting','waiting','review') LIMIT 1").get()
+        || this.db.prepare("SELECT 1 FROM pending WHERE state IN ('pending','answering','unknown') LIMIT 1").get()
+        || this.db.prepare("SELECT 1 FROM outbox WHERE state IN ('pending','sending','unknown') LIMIT 1").get()) throw new BridgeError('session-busy');
+      let id = args.session;
+      if (action === 'create') {
+        if (args.title !== undefined && typeof args.title !== 'string') throw new BridgeError('session-title-invalid');
+        const title = args.title?.trim() || '新的会话';
+        if (typeof title !== 'string' || title.length > 100 || clean(title) !== title) throw new BridgeError('session-title-invalid');
+        id = randomUUID();
+        this.db.prepare('INSERT INTO chat_sessions VALUES(?,?,?,?,?)').run(id, title, Date.now(), 1, -1);
+      } else if (!this.session(id)) throw new BridgeError('session-not-found');
+      if (action === 'archive') {
+        if (this.currentSession()?.session === id) throw new BridgeError('session-active-archive');
+        this.db.prepare('UPDATE chat_sessions SET archived=1 WHERE session=?').run(id);
+      } else {
+        this.db.prepare('UPDATE chat_sessions SET archived=1 WHERE archived=0').run();
+        this.db.prepare('UPDATE chat_sessions SET archived=0 WHERE session=?').run(id);
+      }
+      return { session: id, ...this.sessionControl('list') };
+    });
   }
   job(id) { return this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id); }
   updateJob(id, state, error = null, retryAt = 0) { this.db.prepare('UPDATE jobs SET state=?,error=?,retry_at=?,updated=? WHERE id=?').run(state, error, retryAt, Date.now(), id); }
   reply(job, text, id, maxChars = 2000) {
+    const sid = this.job(job.id)?.session ?? job.session;
+    // Agent text is stored from durable DSH events; transport/control notices have a distinct role.
+    if (!id.startsWith('result:')) this.chat('bridge:' + id, sid, 'bridge', {}, text, Date.now(), job.id);
     const p = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
     const chars = Array.from(text); let part = 0;
     for (let start = 0; start < chars.length; start += maxChars) {

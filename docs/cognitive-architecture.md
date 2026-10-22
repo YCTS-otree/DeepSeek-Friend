@@ -26,7 +26,7 @@
 - P2：有限预算的检索记忆与持续目标，通过原生动态 context 快照装配；实际为 user-role context，来源和不确定性明确标注。
 - P3：原始用户消息/外部输入。既有 OTREE 身份标注继续保留，不用普通用户消息伪造 P1。
 
-Self Model 的权威存储为 SQLite；Markdown/JSON/versions 是可重建的人类可读投影，直接编辑投影不会改变实际注入。按用户后续明确修正：**整个实例共用一个身份、Self Model、记忆库、日记和目标**；账号/说话者仅作为来源信息，不划分人格或记忆空间。不同部署实例的身份 UUID 独立。微信 Session 仍按会话分别映射，以识别当前对象；模型名称、Session ID 与持续身份相互独立。
+Self Model 的权威存储为 SQLite；Markdown/JSON/versions 是可重建的人类可读投影，直接编辑投影不会改变实际注入。按用户后续明确修正：**整个实例共用一个身份、Self Model、记忆库、日记和目标**；账号/说话者仅作为来源信息，不划分人格或记忆空间。不同部署实例的身份 UUID 独立。微信交互使用 WebUI 选择的单个当前 Session，逐条保留发送者来源；模型名称、Session ID 与持续身份相互独立。
 
 每条入站消息标注经过 Bridge 识别的发送者，记忆检索附带原参与者与时间。Agent 据此自主判断哪些内容适合向当前对象提及、哪些不该透露。统一存储不代表全部内容公开；这是依赖模型判断和规则遵循的披露策略，不能伪称具有按用户存储隔离的硬性保密保证。
 
@@ -53,8 +53,8 @@ Dreaming 按本地日历计划，补执行最多每批 31 个缺失日期；补�
 | enabled | true | 启用记忆、Self 和后台作业；关闭时仍保留 OTREE/小鲸鱼 Core 与原 Bridge |
 | idleExtractionMinutes | 15 | 从前台交互结束起计算全局空闲；等待工具/澄清/审批时不算空闲 |
 | retrievalTokenBudget | 1600 | 注入记忆载荷的保守 UTF-8 字节上限，逐个添加完整记录 |
-| selfTokenBudget | 2400 | Self 装配载荷上限；超限提交被拒绝，不静默截断身份 |
-| inputTokenBudget | 8000 | 后台任务指令+JSON 载荷的保守字节上限，降低条目数而不截断 JSON |
+| selfTokenBudget | 12000 | Self 装配载荷上限；超限提交被拒绝，不静默截断身份 |
+| inputTokenBudget | 24000 | 后台任务指令+JSON 载荷的保守字节上限，降低条目数而不截断 JSON |
 | outputTokenBudget | 1800 | 通过 DSH agent/request 设置单次模型请求 maxTokens |
 | workerTimeoutMs | 180000 | 超时只取消该后台 Session |
 | maxAttempts | 3 | 最多尝试次数；重试可能增加总模型费用 |
@@ -85,7 +85,7 @@ npm run cognitive -- retry <scope> <taskId>
 
 纠正使用 `correct <scope> <memoryId>`，从标准输入读取 `{"text":"明确的更正"}`；它记录为本地操作者声明、新增更正条目并退休旧事实。命令不会自行读取任意凭证文件。导出含私人记忆，保存在 `data/cognitive/exports/`，不要贴到公共日志。
 
-显式删除命令：`forget-event <scope> <eventId> --confirm` / `forget-scope <scope> --confirm`。删除前会要求独立 DSH 端口已经停止，并持有 Bridge 数据锁。事件删除会保守清理同次交互及其派生记忆/索引/Self 引用和自由文本副本，移除相应旧会话映射；全库删除作用于所有参与者的共享认知历史。投影、版本中的被删认识、应用内导出也会清理；旧会话被打上禁止再次认知绑定的标记，防止重新导入。
+v1.3.0 按用户「会话只归档」要求，有聊天记录时以下破坏性维护命令会拒绝执行（`cognitive-chat-retention-archive-only`）；纠正和记忆归档仍可用。历史认知删除原语：`forget-event <scope> <eventId> --confirm` / `forget-scope <scope> --confirm`。删除前会要求独立 DSH 端口已经停止，并持有 Bridge 数据锁。事件删除会保守清理同次交互及其派生记忆/索引/Self 引用和自由文本副本，移除相应旧会话映射；全库删除作用于所有参与者的共享认知历史。投影、版本中的被删认识、应用内导出也会清理；旧会话被打上禁止再次认知绑定的标记，防止重新导入。
 
 **该接口不声称删除 DSH 自己的原始日志、提供方记录、操作系统副本或用户另存的备份。** 本机此版本的 Session Controller 未提供已核实的按记录永久删除契约，所以没有直接修改 DSH 日志文件或假装完成全链路抹除。需要完整删除时，应停掉相关上下文，再由操作者按 DSH 自身支持的管理方式处理原始日志/备份；不要打开任何签名私钥。共享库删除是显式用户维护操作，Dreaming 本身从不执行删除或重置会话。
 
@@ -93,8 +93,12 @@ npm run cognitive -- retry <scope> <taskId>
 
 ## 部署与评估
 
-首次安装本扩展必须重启独立服务，使 Preset 装入插件；之后常规 Self 提交不需要重启。旧版本会话首次重新投递时会绑定统一身份，现有微信 Session 映射不删除。修改 CORE 或插件配置需要重启；修改生成的 SELF_MODEL.md 没有效果。
+首次安装本扩展必须重启独立服务，使 Preset 装入插件；之后常规 Self 提交不需要重启。旧版本会话迁移保留 ID、游标和已有请求，选择一个当前会话，其余归档；首次重新投递时绑定统一身份。修改 CORE 或插件配置需要重启；修改生成的 SELF_MODEL.md 没有效果。
 
 `npm run check`、`npm test`、Python 单元测试不调用真实模型。原生装配测试需要项目已安装的固定 DSH 包（`npm run dsh:setup`）。`npm run test:cognitive:live` 自动使用同一安装包、3098 端口和 `.research/` 内独立 home/data，验证 Core、同 Session 热更新、兼容模型切换和后台 JSON；需要已经授权的 API Key 文件或环境变量，会实际消耗模型额度，不涉及微信。测试不会复用工作 DSH 或项目前台会话。
 
 `npm run cognitive:eval -- --days 3` 使用两组不同的**合成经历和模拟日期**做真实模型评估，执行生产校验和有界重试；结果在 `.research/.../longitudinal-evaluation.json`，供人工复核来源、错误解释和自我结论。版本数量不是奖励指标，连续 no-op 合法。它不是实际连续三日/数周运行的证明。验收结果和未实测边界见 cognitive-testing.md。
+
+## v1.3.0 初始文稿和空间
+
+核心 SYS 按用户要求替换而非拼接，旧版备份。`selfPortrait` 保存可演化的自述；原始 v0.1.0 另行按字节留存。房间文本不会作为独立工具验证证据。会话、历史、副本路径和预算升级见 [sessions-and-room.md](sessions-and-room.md)。

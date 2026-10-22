@@ -67,8 +67,8 @@ export class Engine {
     return next;
   }
   async onSession(sid, frame) {
-    const mapping = this.store.db.prepare('SELECT * FROM conversations WHERE session=?').get(sid);
-    if (!mapping || mapping.account !== this.account.accountId) return;
+    const mapping = this.store.session(sid);
+    if (!mapping) return;
     let records;
     if (frame.type === 'snapshot') {
       records = [...frame.records ?? []]; let more = frame.hasMore;
@@ -94,10 +94,11 @@ export class Engine {
         if (cursor >= 0 && event.seq !== cursor + 1) throw new BridgeError('dsh-event-gap');
         const data = publicEvent(event);
         if (data) this.store.db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?)').run(sid, event.seq, event.type, JSON.stringify(data));
+        if (event.type === 'assistant/message' && data?.text) this.store.chat('assistant:' + sid + ':' + event.seq, sid, 'assistant', {}, data.text, event.time > 100000000000 ? event.time : Date.now(), this.store.active(sid)?.id);
         cursor = event.seq;
       }
       if (frame.type === 'snapshot' && cursor < frame.cursor) throw new BridgeError('dsh-snapshot-incomplete');
-      this.store.db.prepare('UPDATE conversations SET cursor=? WHERE session=?').run(cursor, sid);
+      this.store.db.prepare('UPDATE chat_sessions SET cursor=? WHERE session=?').run(cursor, sid);
       this.finish(sid);
     });
   }
@@ -125,8 +126,8 @@ export class Engine {
     }
   }
   async submit(job) {
-    const mapping = this.store.ensureMapping(job.account, job.user);
-    const session = mapping.session;
+    const session = this.store.job(job.id).session ?? this.store.ensureMapping(job.account, job.user).session;
+    this.store.chat('user:' + job.id, session, 'user', { accountId: job.account, userId: job.user }, JSON.parse(job.payload).text, job.created, job.id);
     const text = this.store.tx(() => {
       const saved = this.store.job(job.id); const payload = JSON.parse(saved.payload);
       if (typeof payload.dshText !== 'string') {
@@ -140,13 +141,21 @@ export class Engine {
       // Pin the exact submitted text before any RPC; retries and restarts reuse the same body.
       this.store.db.prepare("UPDATE jobs SET payload=?,session=?,state='submitting',attempts=attempts+1,updated=? WHERE id=?")
         .run(JSON.stringify(payload), session, Date.now(), job.id);
+      this.store.db.prepare('UPDATE chat_entries SET actor=? WHERE id=?').run(JSON.stringify({ accountId: saved.account, userId: saved.user,
+        displayName: payload.dshText.startsWith('【微信发送者身份】\n当前与你对话的人是 OTREE。') ? 'OTREE' : '微信用户 ' + saved.user }), 'user:' + job.id);
       return payload.dshText;
     });
     try {
       this.cognitive?.bind(job, session);
-      const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(JSON.stringify([job.account, job.user])).digest('hex').slice(0, 32));
+      const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(session).digest('hex').slice(0, 32));
       fs.mkdirSync(cwd, { recursive: true });
-      await this.dsh.rpc('session/create', { sessionId: session, cwd, agentPreset: this.config.dsh.agentPreset }, this.signal);
+      if (this.store.get('dsh-created:' + session)) {
+        // A vanished established Session is an operator decision, never a hidden replacement.
+        await this.dsh.rpc('session/projections', { sessionId: session }, this.signal);
+      } else {
+        await this.dsh.rpc('session/create', { sessionId: session, cwd, agentPreset: this.config.dsh.agentPreset }, this.signal);
+        this.store.set('dsh-created:' + session, '1');
+      }
       this.dsh.follow(session);
       await this.dsh.rpc('session/prompt', { sessionId: session, requestId: job.request_id, mode: 'queue',
         content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' }, this.signal);
@@ -181,9 +190,8 @@ export class Engine {
     return reserved ? null : id;
   }
   async onRequest(frame) {
-    const mapping = this.store.db.prepare('SELECT * FROM conversations WHERE session=?').get(frame.agentId);
     const job = this.store.active(frame.agentId);
-    if (!mapping || mapping.account !== this.account.accountId || !job || frame.clientId !== this.dsh.clientId) return;
+    if (!this.store.session(frame.agentId) || job?.account !== this.account.accountId || frame.clientId !== this.dsh.clientId) return;
     if (!['approval/request', 'user-questions/request'].includes(frame.event)) return;
     await (this.chains.get(frame.agentId) ?? Promise.resolve());
     const kind = frame.event === 'approval/request' ? 'approval' : 'question';
@@ -195,7 +203,7 @@ export class Engine {
     if (kind === 'approval') request._bridgeAuditId = this.approvalAudit(frame.agentId, request, frame.eventId);
     this.store.db.prepare(`INSERT INTO pending(id,session,account,user,event_id,client_id,kind,request,expires) VALUES(?,?,?,?,?,?,?,?,?)
       ON CONFLICT(session,event_id) DO UPDATE SET client_id=excluded.client_id,state=CASE WHEN pending.state IN ('done','unknown') THEN pending.state ELSE 'pending' END`)
-      .run(id, frame.agentId, mapping.account, mapping.user, frame.eventId, frame.clientId, kind, JSON.stringify(request), expires);
+      .run(id, frame.agentId, job.account, job.user, frame.eventId, frame.clientId, kind, JSON.stringify(request), expires);
     const pending = this.store.db.prepare('SELECT * FROM pending WHERE id=?').get(id);
     if (pending.state !== 'pending') return;
     if (kind === 'approval') {
@@ -223,7 +231,9 @@ export class Engine {
       const active = map && this.store.active(map.session);
       const requests = map ? this.store.db.prepare("SELECT id,kind FROM pending WHERE session=? AND state='pending'").all(map.session) : [];
       reply = `当前任务：${active?.state ?? 'idle'}；排队：${this.store.db.prepare("SELECT count(*) AS n FROM jobs WHERE account=? AND user=? AND state IN ('queued','backoff')").get(job.account, job.user).n}；待答复：${requests.map(p => p.kind + ':' + p.id).join(',') || '无'}`;
-    } else if (cmd === '/cancel' || cmd === '/reset') {
+    } else if (cmd === '/reset') {
+      reply = '会话不会删除或自动重建。请在本机 WebUI「会话与聊天记录」中新建并切换，旧会话将归档保留。';
+    } else if (cmd === '/cancel') {
       if (map) {
         // cancel alone preserves DSH's inbox; explicitly remove queued items before cancelling.
         const p = await this.dsh.rpc('session/projections', { sessionId: map.session }, this.signal);
@@ -242,11 +252,9 @@ export class Engine {
       this.store.tx(() => {
         this.store.db.prepare("UPDATE jobs SET state='done',error='user-cancelled' WHERE account=? AND user=? AND id!=? AND state IN ('queued','backoff','submitting','waiting','review')").run(job.account, job.user, job.id);
         if (map) this.store.db.prepare("UPDATE pending SET state='stale' WHERE session=?").run(map.session);
-        if (cmd === '/reset') this.store.db.prepare('DELETE FROM conversations WHERE account=? AND user=?').run(job.account, job.user);
       });
-      if (cmd === '/reset' && map) this.dsh.unfollow?.(map.session);
       if (map) this.cognitive?.idle(map.session);
-      reply = cmd === '/reset' ? '会话映射已清理，下条消息将创建新的 DSH Session。原 DSH 历史保留。' : '已请求取消 DSH 任务并清理本会话排队消息。';
+      reply = '已请求取消 DSH 任务并清理本会话排队消息。';
     } else {
       const p = this.store.db.prepare("SELECT * FROM pending WHERE id=? AND account=? AND user=? AND state='pending'").get(id ?? '', job.account, job.user);
       if (!p || !map || p.session !== map.session || p.expires <= Date.now() || p.client_id !== this.dsh.clientId) throw new BridgeError('pending-stale-or-foreign');
@@ -286,11 +294,10 @@ export class Engine {
     // Controls may be handled while a turn waits, but remain serialized with prompt admission.
     jobs.sort((a, b) => Number(isCommand(JSON.parse(b.payload).text)) - Number(isCommand(JSON.parse(a.payload).text)));
     for (const job of jobs) {
-      const key = JSON.stringify([job.account, job.user]);
+      const key = job.session ?? this.store.ensureMapping(job.account, job.user).session;
       if (this.busy.has(key) || this.busy.size >= this.config.bridge.concurrency) continue;
       const control = isCommand(JSON.parse(job.payload).text);
-      const map = this.store.mapping(job.account, job.user);
-      const active = map && this.store.active(map.session);
+      const active = this.store.active(key);
       if (!control && active && active.id !== job.id) continue;
       const p = (control ? this.command(job) : this.submit(job)).catch(e => {
         this.store.updateJob(job.id, 'done', e.code ?? 'command-error');
@@ -337,7 +344,7 @@ export class Engine {
   async run() {
     this.store.recover();
     this.cognitive?.restoreActive(this.store);
-    for (const row of this.store.db.prepare('SELECT session FROM conversations WHERE account=?').all(this.account.accountId)) this.dsh.follow(row.session);
+    for (const row of this.store.db.prepare('SELECT session FROM chat_sessions').all()) this.dsh.follow(row.session);
     const tasks = [this.dsh.run(this.signal), this.poll(), (async () => {
       while (!this.signal.aborted) { await this.tick(); await sleep(100, this.signal).catch(() => {}); }
     })(), (async () => {

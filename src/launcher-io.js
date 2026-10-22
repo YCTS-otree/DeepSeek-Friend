@@ -25,6 +25,12 @@ export class LauncherIO {
       let msg; try { msg = JSON.parse(line); } catch { return; }
       if (msg.command === 'shutdown') shutdown?.();
       if (msg.command === 'open-dsh') Promise.resolve(open?.()).catch(() => this.emit('ui.open-failed'));
+      if (msg.command === 'sessions' && typeof msg.id === 'string' && /^[a-f0-9-]{36}$/.test(msg.id)) {
+        Promise.resolve().then(() => {
+          if (!this.sessions) throw Object.assign(new Error(), { code: 'bridge-not-ready' });
+          return this.sessions(msg.action, msg.args ?? {});
+        }).then(result => this.emit('ui.sessions', { id: msg.id, result }), e => this.emit('ui.sessions', { id: msg.id, error: e.code ?? 'session-operation-failed' }));
+      }
       if (msg.command === 'verify' && this.pending && msg.id === this.pending.id && /^\d{1,12}$/.test(msg.code ?? '')) this.pending.resolve(msg.code);
     });
     this.reader.on('close', () => shutdown?.());

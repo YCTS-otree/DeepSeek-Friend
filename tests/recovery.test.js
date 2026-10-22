@@ -60,7 +60,7 @@ test('reset of an explicitly missing DSH session is controlled and creates no hi
   f.dsh.emit('missing', j.session); assert.equal(f.job('a').state, 'review');
   f.dsh.rpc = async endpoint => { if (endpoint === 'session/projections') return null; throw new BridgeError('session/not-found'); };
   f.ingest(incoming('/reset', 'reset')); await f.engine.command(f.job('reset'));
-  assert.equal(f.store.mapping('bot-test', 'alice'), undefined); assert.equal(f.job('a').state, 'done');
+  assert.equal(f.store.mapping('bot-test', 'alice').session, j.session); assert.equal(f.job('a').state, 'review');
 });
 test('inbound NEW state is accepted and generating fragments cannot advance into Agent jobs', t => {
   const f = fixture(t); f.ingest(incoming('new', 'new', 'alice', { message_state: 0 }), incoming('partial', 'partial', 'alice', { message_state: 1 }));
@@ -76,8 +76,8 @@ test('changing the active Weixin account cannot execute an old account queue or 
   assert.equal(f.dsh.calls.find(c => c.endpoint === 'session/prompt').args.content[0].text,
     '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\ncurrent');
 });
-test('reset releases the old follow subscription', async t => {
+test('reset never replaces the session or releases its follow subscription', async t => {
   const f = fixture(t); f.ingest(incoming('hello', 'hi')); await f.engine.submit(f.job('hi'));
   const sid = f.job('hi').session; assert.ok(f.dsh.follows.has(sid));
-  f.ingest(incoming('/reset', 'reset')); await f.engine.command(f.job('reset')); assert.ok(!f.dsh.follows.has(sid));
+  f.ingest(incoming('/reset', 'reset')); await f.engine.command(f.job('reset')); assert.ok(f.dsh.follows.has(sid));
 });

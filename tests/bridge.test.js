@@ -42,7 +42,7 @@ test('MVP workflow creates a real Agent prompt, collects text only, then replies
   assert.ok(!JSON.stringify(f.store.db.prepare('SELECT * FROM events').all()).includes('SECRET'));
   await f.engine.sendOne(); assert.equal(f.store.db.prepare('SELECT state FROM outbox').get().state, 'sent');
 });
-test('three related messages reuse one session; another sender has a separate active conversation', async t => {
+test('three related messages and other authorized speakers share the WebUI-selected session', async t => {
   const f = fixture(t);
   for (let i = 1; i <= 3; i++) {
     f.ingest(incoming('context ' + i, 'a' + i)); const job = f.job('a' + i); await f.engine.submit(job);
@@ -55,7 +55,7 @@ test('three related messages reuse one session; another sender has a separate ac
   f.ingest(incoming('bob', 'b', 'bob')); await f.engine.submit(f.job('b'));
   assert.equal(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').at(-1).args.content[0].text,
     '【微信发送者身份】\n当前与你对话的人是 微信用户 "bob"。\n\n【用户消息】\nbob');
-  assert.notEqual(f.store.mapping('bot-test', 'alice').session, f.store.mapping('bot-test', 'bob').session);
+  assert.equal(f.store.mapping('bot-test', 'alice').session, f.store.mapping('bot-test', 'bob').session);
 });
 test('new messages queue during inference and resume after completion', async t => {
   const f = fixture(t); f.ingest(incoming('first', '1'), incoming('second', '2'));
@@ -183,15 +183,15 @@ test('answer schema rejects missing IDs, foreign choices and multi-selection vio
   assert.throws(() => answerValue(r, '[{"id":"q","selected":["root"]}]'));
   assert.throws(() => answerValue(r, '[{"id":"q","selected":["a","b"]}]'));
 });
-test('reset explicitly removes DSH inbox before cancelling; old Agent history is retained', async t => {
+test('cancel explicitly removes DSH inbox before cancelling while keeping the same session', async t => {
   const f = fixture(t); f.ingest(incoming('a', 'a')); await f.engine.submit(f.job('a')); const old = f.job('a').session;
   const rpc = f.dsh.rpc.bind(f.dsh); f.dsh.rpc = async (endpoint, args) => {
     const result = await rpc(endpoint, args);
     return endpoint === 'session/projections' ? { values: { inbox: { 'next-turn': [{ id: 'queued-id' }], 'next-step': [] } } } : result;
   };
-  f.ingest(incoming('/reset', 'reset')); await f.engine.command(f.job('reset'));
+  f.ingest(incoming('/cancel', 'reset')); await f.engine.command(f.job('reset'));
   const methods = f.dsh.calls.map(c => c.endpoint); assert.ok(methods.indexOf('session/updateQueue') < methods.indexOf('session/cancel'));
-  f.ingest(incoming('new', 'new')); await f.engine.submit(f.job('new')); assert.notEqual(f.job('new').session, old);
+  f.ingest(incoming('new', 'new')); await f.engine.submit(f.job('new')); assert.equal(f.job('new').session, old);
 });
 test('stale auth halts polling immediately and records a safe error code', async t => {
   const f = fixture(t); let count = 0; f.ilink.updates = async () => { count++; throw new BridgeError('ilink-auth-expired'); };

@@ -10,7 +10,9 @@
   "weixin": {
     "enabled": true,
     "apiBaseUrl": "https://ilinkai.weixin.qq.com",
-    "allowedHosts": ["ilinkai.weixin.qq.com"],
+    "allowedHosts": [
+      "ilinkai.weixin.qq.com"
+    ],
     "appId": "bot",
     "clientVersion": "2.4.10",
     "allowedUsers": [],
@@ -21,8 +23,8 @@
     "enabled": true,
     "idleExtractionMinutes": 15,
     "retrievalTokenBudget": 1600,
-    "selfTokenBudget": 2400,
-    "inputTokenBudget": 8000,
+    "selfTokenBudget": 12000,
+    "inputTokenBudget": 24000,
     "outputTokenBudget": 1800,
     "workerTimeoutMs": 180000,
     "maxAttempts": 3,

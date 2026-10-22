@@ -1,6 +1,6 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.2.0**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
+版本 **1.3.0**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
 
@@ -32,7 +32,7 @@
 
 启动器仅需 **Python 3.10+ 标准库**，无需 pip 安装、Flask 或新虚拟环境。Windows 脚本优先使用 `DEEPSEEK_FRIEND_PYTHON` 指定解释器，其次使用本机已有的 `G:\Python\Python_Environment\Python310\python.exe`，其他机器回退到 PATH 中的 `python`。也可跨平台执行 `python launcher.py --port 3090`。请使用原先授权的 Windows 用户运行，DPAPI 凭证不能跨用户解密。
 
-页面仅绑定 `127.0.0.1`；浏览器自动打开链接交换一次性登录票据，随后清理地址栏。控制接口校验会话 Cookie、Host、Origin 和 CSRF；二维码和验证码仅在本地内存/专用 IPC 中使用，不进入运行记录。不要转发此端口或把该页面部署到公网。此页面只管理本机连接，不是聊天前端。内部 DSH Web UI 仍由 DSH 本身提供。
+页面仅绑定 `127.0.0.1`；浏览器自动打开链接交换一次性登录票据，随后清理地址栏。控制接口校验会话 Cookie、Host、Origin 和 CSRF；二维码和验证码仅在本地内存/专用 IPC 中使用，不进入运行记录。不要转发此端口或把该页面部署到公网。页面同时管理当前交互会话并查看双方聊天记录；消息输入仍在微信。内部 DSH Web UI 仍由 DSH 本身提供。
 
 如果尚未安装依赖，先完成下节的 `npm ci` 和 `npm run dsh:setup`。首次没有 API Key 文件时，可通过「打开 DSH 管理页面」配置独立实例的模型。
 
@@ -43,7 +43,7 @@
 - 独立 DSH 固定为 **0.2.0-rc.2**，项目内安装，不复用工作的 DSH。
 - 独立依赖树对 MCP client 固定为 `2.3.0`、fflate 固定为 `0.8.3`，修复初始依赖审计发现的问题；DSH 核心源码不作修改，详见兼容性记录。
 - 默认 `http://127.0.0.1:3088`；配置会拒绝工作 DSH 的 `3080` 端口。
-- 独立运行数据在 `.runtime/home/`，会话工作目录在 `data/workspaces/<账号与用户哈希>/`。
+- 独立运行数据在 `.runtime/home/`，会话工作目录在 `data/workspaces/<Session 哈希>/`。
 - 不复制工作 DSH 的配置、模型凭证、会话、插件或签名私钥；不修改其安装目录或全局配置。
 
 安装并运行：
@@ -89,22 +89,22 @@ Linux 使用相同 npm 命令。实现使用跨平台路径、SQLite 与 Linux �
 1. 确认独立 DSH 的模型可用，且 `npm run doctor` 通过。
 2. 启动 Bridge，扫码授权。
 3. 从扫码的微信发送“你好”；Bridge 新建独立 DSH Session。
-4. 继续发送相关问题：同一账号和用户复用该 Session。推理中的新消息先持久化排队。
+4. 继续发送相关问题：所有已授权发送者复用 WebUI 当前选定的同一个 Session，每条消息仍注明发送者。推理中的新消息先持久化排队。
 5. 重启 Bridge 后，微信凭证、同步游标、Session 映射和待发送回复从本地恢复。
 
 扫码授权者的每条新消息附带「当前与你对话的人是 OTREE。」；其他白名单用户附带各自微信用户标识，不冒用 OTREE。原始正文保留；姓名不授予额外权限。完整提交正文在首次 RPC 前持久化，未知结果重试保持相同内容与 requestId；升级前已尝试提交的旧任务沿用原文重试，避免同一请求变更。
 
-微信内命令均只作用于发送者自己的会话：
+微信内命令保留发送者校验；交互会话统一由 WebUI 选择：
 
 | 命令 | 作用 |
 | --- | --- |
 | `/status` | 查看当前任务、排队数量、待回答编号 |
 | `/cancel` | 移除 DSH inbox 中未执行项，再取消当前 turn，并清理本会话 Bridge 队列 |
-| `/reset` | 完成上述取消后移除映射；下条消息建立新 Session，旧历史/工作文件保留 |
+| `/reset` | 只提示到 WebUI 新建并切换；不取消、不删除或替换当前会话 |
 | `/answer 编号 答案` | 回答单个澄清问题；多问题使用提示中的 JSON 格式 |
 | `/approve 编号` / `/deny 编号` | 已在本地启用且绑定校验通过的单次审批；默认不开放批准 |
 
-默认 `weixin` Preset 提供 DSH 的 `ask_user_question` 以及受控的 Self Model/记忆工具。原有 DSH `tools.restrict`/`tools.guard` 继续阻止通用 Shell、文件写入、管理员工具和未授权 MCP；Self 工具只可更改认知数据库中的规定字段，不能修改此策略。认知插件本身不限制自定义前台 Preset 的原有工具，后台 Preset 始终不提供外部操作工具。
+默认 `weixin` Preset 提供 DSH 的 `ask_user_question` 以及受控的 Self Model/记忆/小房间工具。原有 DSH `tools.restrict`/`tools.guard` 继续阻止通用 Shell、文件写入、管理员工具和未授权 MCP；Self 工具只可更改认知数据库中的规定字段，不能修改此策略。认知插件本身不限制自定义前台 Preset 的原有工具，后台 Preset 始终不提供外部操作工具。
 
 如果需要更多工具，应由本机操作者编辑独立 DSH Preset/策略，配置 DSH 自己的审批机制，再决定是否开启 `bridge.allowApprovals`。这属于扩大权限的显式本地操作。Bridge 的批准仍需同时满足：账号、发送者、当前 Session、在线 `$events` Client、事件 ID、未过期请求，以及 DSH `approval/asked` 审计与 `tool/call` 精确绑定；只回传 `allowed-once`，不创建永久许可。操作参数无法完整展示或绑定缺失时拒绝。
 
@@ -117,7 +117,7 @@ Linux 使用相同 npm 命令。实现使用跨平台路径、SQLite 与 Linux �
 | `dataDir` | `data`；凭证、数据库与故障状态 |
 | `dsh.baseUrl` | `http://127.0.0.1:3088`；仅允许无凭证的本机回环 URL |
 | `dsh.agentPreset` | `weixin`；启动时必须存在且通过 DSH 的可用性检查 |
-| `dsh.cwd` | 会话工作目录的根；每个账号/用户派生独立哈希子目录 |
+| `dsh.cwd` | 会话工作目录的根；每个 Session 派生稳定哈希子目录 |
 | `dsh.timeoutMs` / `turnTimeoutMs` | RPC 超时 / 整轮等待上限；超时请求取消并进入待核对状态 |
 | `weixin.apiBaseUrl` | 腾讯官方 iLink HTTPS 地址 |
 | `weixin.allowedHosts` | 精确允许的 API 主机；IDC 跳转不在列表时拒绝，不自动信任服务端 URL |
@@ -157,7 +157,7 @@ node src/main.js outbox discard <输出中的id>
 node src/main.js outbox retry <输出中的id>
 ```
 
-`status` 允许在运行中只读查询。会修改 outbox 的命令要求先停止实例。微信 `-14` / HTTP 401/403 会停止全通道请求并提示重新扫码。DSH 失联采用指数退避；会话丢失、参数不兼容和无法确认的错误进入 `review`，由 `/cancel` 或 `/reset` 可控处理，不静默丢弃上下文。
+`status` 允许在运行中只读查询。会修改 outbox 的命令要求先停止实例。微信 `-14` / HTTP 401/403 会停止全通道请求并提示重新扫码。DSH 失联采用指数退避；会话丢失、参数不兼容和无法确认的错误进入 `review`，先由 `/cancel` 核对停止，需新会话时再由 WebUI 明确新建并切换，不静默丢弃上下文。
 
 本项目减少丢失与重复的概率，**不提供严格 Exactly Once 承诺**。特别是微信发送成功但确认丢失时，官方协议没有在本项目验证过的投递查询/去重保证。
 
@@ -180,7 +180,7 @@ node --test tests/dsh-live.test.js
 Remove-Item Env:RUN_DSH_PROTOCOL
 ```
 
-自动化覆盖文本全链路 Mock、三轮 Session 复用、用户隔离、重复推送、原子游标、DSH 超时重试、快照回补、发送结果未知、账号锁、扫码验证/过期/跳转、授权失效、审批所有者/调用绑定、澄清期间排队和取消清理。
+自动化覆盖文本全链路 Mock、三轮 Session 复用、当前会话共享和审批发送者校验、重复推送、原子游标、DSH 超时重试、快照回补、发送结果未知、账号锁、扫码验证/过期/跳转、授权失效、审批所有者/调用绑定、澄清期间排队和取消清理。
 
 **真实微信 A–E 场景仍需扫码账号验收。** 已用用户提供的 API Key 通过独立 DSH Session 完成一次真实模型响应验证；这不等于微信端到端通过。完整结果见 [测试报告](docs/testing.md)；接口与兼容边界见 [调研记录](docs/research.md) 和 [兼容性](docs/compatibility.md)。
 
@@ -188,6 +188,10 @@ Remove-Item Env:RUN_DSH_PROTOCOL
 
 ## 限制与扩展
 
-首版为单账号、已授权私聊的文本 MVP。媒体消息会明确提示不支持，不下载附件；已保留消息类型与 API 分层，未来媒体实现需要域名、大小、超时及解密校验。当前不开放群聊、主动联系人发送、Web 管理界面、任意远程 DSH、Linux 实机支持承诺或自动提权。
+首版为单账号、已授权私聊的文本 MVP。媒体消息会明确提示不支持，不下载附件；已保留消息类型与 API 分层，未来媒体实现需要域名、大小、超时及解密校验。当前不开放群聊、主动联系人发送、公网 Web 管理、任意远程 DSH、Linux 实机支持承诺或自动提权。
 
 默认采用阻塞式 DSH 澄清工具；兼容已核对的 timed wait 持有流，但未进行真实模型触发的定时澄清验收。MCP 可由独立 DSH 后续配置，默认策略会阻止其继承与执行，Bridge 不另建 MCP 服务。后续可增加受审计的工具白名单、多账号调度、数据库保留/归档策略和真实媒体兼容性测试。
+
+## v1.3.0 会话、初稿与小房间
+
+默认持续使用一个交互会话，只有在 WebUI 明确新建或切换时改变。旧会话只归档，双方文本持久保存并可分页查看。初始 Self Model 原稿永久保留为 v0.1.0；当前自述仍可依据经历演化。`SYS_Prompt.txt` 替换原核心 SYS，旧版已备份。个人空间在 `data/cognitive/room/`，不取代其他 DSH 工具的授权范围。完整机制和升级步骤见 [持续会话与小房间](docs/sessions-and-room.md)。

@@ -59,3 +59,15 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 常规：`npm test`、`npm run check`。真实独立 DSH：设置 `RUN_DSH_PROTOCOL=1` 后执行 `node --test tests/dsh-live.test.js`；该测试只创建带 protocol-test 前缀的空 Session 并检查控制协议，不调用模型和微信。
 
 真实微信验收按 docs/testing.md 执行。遇到网络故障先用单个测试账号验证；不要把自动化成功当作真实投递证明。
+
+## v1.3.0 升级与会话维护
+
+先在 WebUI 退出启动器，再重新运行 start-web.bat。当前 Session 不自动重置。`/reset` 仅提示使用 WebUI；新建并切换会归档旧会话。SYS 原文已替换并备份；初始 Self v0.1.0 独立保留。旧配置若显式使用 2400/8000 的 self/input 预算，请按 config.example.json 调为 12000/24000，以容纳完整初稿。
+
+- `session-busy`：等待当前任务/审批/出站消息完成；review 用 /status 核对，必要时 /cancel。未知 outbox 按原维护流程人工核对。
+- `session-result-unknown`：刷新列表确认结果，避免重复新建。
+- `historical-self-integrity`：历史原稿或清单不一致，拒绝覆盖；从自己保留的原稿/版本库恢复，不要随意重算哈希掩盖差异。
+- `room-version-conflict`：先读最新文件，再以其 sha256 保存。
+- `cognitive-chat-retention-archive-only`：当前保留策略禁止会话历史破坏性清理，使用归档/纠正。
+
+完整规则见 [sessions-and-room.md](sessions-and-room.md)。

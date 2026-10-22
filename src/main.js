@@ -90,7 +90,14 @@ async function main() {
     const client = new IlinkClient(c.weixin, credentials);
     store = new Store(path.join(c.dataDir, 'bridge.sqlite'));
     log('bridge.started', { version: VERSION });
-    await new Engine(c, store, dsh, client, credentials, controller.signal).run();
+    const engine = new Engine(c, store, dsh, client, credentials, controller.signal);
+    if (ui) ui.sessions = (action, args) => {
+      if (['create', 'switch', 'archive'].includes(action) && (engine.busy.size || engine.chains.size)) throw new BridgeError('session-busy');
+      const result = store.sessionControl(action, args);
+      if (['create', 'switch'].includes(action)) dsh.follow(result.session);
+      return result;
+    };
+    await engine.run();
   } finally { controller.abort(); if (unlockAccount) await unlockAccount(); store?.close(); release(); }
 }
 main().catch(e => {

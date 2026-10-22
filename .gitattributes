@@ -1,0 +1,5 @@
+# These operator-supplied historical documents are retained byte for byte on all platforms.
+/Self_model.txt -text whitespace=-trailing-space,cr-at-eol
+/SYS_Prompt.txt -text whitespace=-trailing-space,cr-at-eol
+/cognitive/CORE.md -text whitespace=-trailing-space,cr-at-eol
+/cognitive/bootstrap/** -text whitespace=-trailing-space,cr-at-eol

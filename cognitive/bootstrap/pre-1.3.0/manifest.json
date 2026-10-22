@@ -1,0 +1,6 @@
+{
+  "origin": "DeepSeek:Friend v1.2.0 cognitive/CORE.md",
+  "sha256": "1f4131c6e1c30eeeee8c7f12caeda00673f1bf5e4fb02eae42ccbf9c4a869f63",
+  "replacement": "SYS_Prompt.txt supplied by OTREE",
+  "mode": "replace-not-append"
+}

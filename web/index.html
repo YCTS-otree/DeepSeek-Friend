@@ -28,6 +28,13 @@
         <section class="card guide"><span class="step">接下来</span><h2>在微信里，说一声「你好」</h2><p>授权成功后直接发消息。多轮对话和工具权限由独立 DSH 管理，同一会话会在重启后继续。</p><div class="guide-note"><span aria-hidden="true">⌁</span> 工作中的 DSH 与此项目独立运行。</div></section>
       </div>
     </div>
+    <section class="card chat-card" aria-labelledby="chat-title">
+      <div class="activity-head"><div><span class="step">持续对话</span><h2 id="chat-title">会话与聊天记录</h2></div><button id="refresh-sessions" class="text-button">刷新记录</button></div>
+      <p class="chat-note">默认一直使用当前会话。新建并切换后，旧会话归档，双方记录保留；Self Model 和记忆仍然统一。</p>
+      <form id="new-session-form" class="new-session"><label for="session-title">新会话名称</label><input id="session-title" maxlength="100" placeholder="例如：一起做项目"><button class="button primary" type="submit">新建并切换</button></form>
+      <p id="session-status" class="chat-note" role="status"></p>
+      <div class="chat-grid"><nav id="session-list" aria-label="会话列表"></nav><div class="history-panel"><div class="history-head"><strong id="history-title">请选择会话</strong><button id="switch-session" class="text-button" disabled>切换到此会话</button></div><button id="older-history" class="text-button" hidden>加载更早记录</button><div id="chat-history" class="chat-history" aria-label="双方聊天记录"></div></div></div>
+    </section>
     <section class="card activity"><div class="activity-head"><div><span class="step">运行记录</span><h2>连接动态</h2></div><span id="connection" class="connection">正在连接控制台…</span></div><div id="logs" class="logs" role="log" aria-label="脱敏运行记录"><p class="empty-log">尚无运行记录。启动服务后将在这里显示状态。</p></div></section>
   </main>
   <footer><span>本地凭证 · 独立会话 · 官方 iLink 通道</span><button id="quit" class="text-button">退出启动器</button></footer>

@@ -3,8 +3,9 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { BridgeError } from '../util.js';
+import { initialPortrait, preserveInitial } from './bootstrap.js';
 
-export const SELF_FIELDS = ['narrative', 'traits', 'values', 'preferences', 'understanding', 'openQuestions'];
+export const SELF_FIELDS = ['narrative', 'traits', 'values', 'preferences', 'understanding', 'openQuestions', 'selfPortrait'];
 export const MEMORY_KINDS = ['semantic', 'episodic', 'autobiographical', 'procedural', 'reflective'];
 const fail = code => { throw new BridgeError('cognitive-' + code); };
 export const digest = value => createHash('sha256').update(value).digest('hex');
@@ -41,13 +42,14 @@ export function budget(text, tokens) {
 function initialModel(identity) {
   return { identity: { id: identity, substrate: 'DSH', anchor: 'OTREE 的快乐小鲸鱼；身份称呼不证明主观情绪',
     continuity: '身份记录、经历和自我模型独立于当前 Session 与底层模型名称。' },
-    ...Object.fromEntries(SELF_FIELDS.map(k => [k, []])) };
+    ...Object.fromEntries(SELF_FIELDS.map(k => [k, []])), selfPortrait: [initialPortrait()] };
 }
 
 export class CognitiveStore {
-  constructor(dir, { selfTokenBudget = 2400 } = {}) {
+  constructor(dir, { selfTokenBudget = 12000 } = {}) {
     this.selfTokenBudget = selfTokenBudget;
     this.dir = path.resolve(dir); fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    preserveInitial(this.dir);
     this.db = new DatabaseSync(path.join(this.dir, 'cognitive.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;
       CREATE TABLE IF NOT EXISTS scopes(id TEXT PRIMARY KEY,identity TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,last_activity INTEGER NOT NULL,daily_watermark INTEGER NOT NULL DEFAULT 0);
@@ -89,6 +91,17 @@ export class CognitiveStore {
       if (result.changes) {
         const row = this.db.prepare('SELECT identity FROM scopes WHERE id=?').get(id);
         this.db.prepare('INSERT INTO self_versions VALUES(?,?,?,?,?,?,?,?,?)').run(id, 1, null, now, JSON.stringify(initialModel(row.identity)), '初始化：尚无稳定行为特征', '[]', 'bootstrap', 'validated-initial-state');
+      }
+      const key = 'bootstrap-portrait:' + id;
+      if (!this.db.prepare('SELECT 1 FROM cognitive_meta WHERE key=?').get(key)) {
+        const current = this.current(id);
+        if (!Object.hasOwn(current.model, 'selfPortrait')) {
+          const version = current.version + 1;
+          this.db.prepare('INSERT INTO self_versions VALUES(?,?,?,?,?,?,?,?,?)').run(id, version, current.version, now,
+            JSON.stringify({ ...current.model, selfPortrait: [initialPortrait()] }), '接入 OTREE 提供的初始自述；保留已有身份和经历', '[]', 'operator-bootstrap', 'trusted-initial-text-not-observed-trait');
+          this.db.prepare('UPDATE scopes SET version=? WHERE id=?').run(version, id);
+        }
+        this.db.prepare('INSERT INTO cognitive_meta VALUES(?,?)').run(key, '0.1.0');
       }
     });
     return id;
@@ -173,8 +186,9 @@ export class CognitiveStore {
     for (const [field, list] of Object.entries(proposal.changes)) {
       if (!Array.isArray(list) || list.length > 10) fail('self-shape');
       model[field] = list.map(item => {
+        if (field === 'selfPortrait' && JSON.stringify(item) === JSON.stringify(initialPortrait())) return structuredClone(item);
         if (!item || Object.keys(item).some(k => !['text', 'evidenceRefs', 'confidence'].includes(k))) fail('self-shape');
-        const text = plain(item.text, 400); if (injection.test(text)) fail('instruction-in-data');
+        const text = plain(item.text, field === 'selfPortrait' ? 6000 : 400); if (injection.test(text)) fail('instruction-in-data');
         const memories = this.evidence(scope, item.evidenceRefs, 'memories');
         const events = memories.flatMap(m => this.evidence(scope, JSON.parse(m.evidence).map(e => e.id)));
         const external = events.filter(e => ['user_statement', 'tool_result', 'observed_outcome'].includes(e.source));
@@ -221,13 +235,13 @@ export class CognitiveStore {
   rollback(scope, version, reason) {
     const old = this.db.prepare('SELECT model FROM self_versions WHERE scope=? AND version=?').get(scope, version); if (!old) fail('version-missing');
     const current = this.current(scope); const model = JSON.parse(old.model);
-    const evidenceRefs = [...new Set([...SELF_FIELDS.flatMap(k => current.model[k].flatMap(x => x.evidenceRefs)), ...SELF_FIELDS.flatMap(k => model[k].flatMap(x => x.evidenceRefs))])];
-    const p = this.propose(scope, { baseVersion: current.version, changes: Object.fromEntries(SELF_FIELDS.map(k => [k, model[k]])), summary: '回滚：' + plain(reason, 200), evidenceRefs }, 'rollback');
+    const evidenceRefs = [...new Set([...SELF_FIELDS.flatMap(k => (current.model[k] ?? []).flatMap(x => x.evidenceRefs)), ...SELF_FIELDS.flatMap(k => (model[k] ?? []).flatMap(x => x.evidenceRefs))])];
+    const p = this.propose(scope, { baseVersion: current.version, changes: Object.fromEntries(SELF_FIELDS.map(k => [k, model[k] ?? []])), summary: '回滚：' + plain(reason, 200), evidenceRefs }, 'rollback');
     return p.noop ? p : this.commit(scope, p.id);
   }
   visibleSelf(scope) {
     const current = this.current(scope); const model = structuredClone(current.model); let retired = 0;
-    for (const field of SELF_FIELDS) model[field] = model[field].filter(item => {
+    for (const field of SELF_FIELDS) model[field] = (model[field] ?? []).filter(item => {
       const valid = item.evidenceRefs.every(id => this.db.prepare('SELECT active FROM memories WHERE scope=? AND id=?').get(scope, id)?.active);
       if (!valid) retired++; return valid;
     });

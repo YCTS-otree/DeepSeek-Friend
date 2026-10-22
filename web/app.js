@@ -15,6 +15,9 @@ const errors = {
   'login-timeout': '扫码等待超时，请点击「重新扫码 / 刷新」生成新二维码。',
   'qr-expired': '二维码已多次过期，请重新扫码。',
   'launcher-busy': '正在处理服务操作，请稍候。',
+  'session-busy': '当前仍有任务、审批或待发送消息。请先等其结束；结果不明的任务需在本机核对后处理。',
+  'session-active-archive': '先新建或切换到其他会话，当前会话才会归档。',
+  'session-result-unknown': '会话操作结果暂未确认，请刷新列表核对，避免重复新建。',
 };
 const loginLabels = { idle: '尚未连接', refreshing: '正在获取二维码', waiting: '等待扫码', scanned: '等待手机确认', verify: '需要验证码', confirming: '正在验证', ready: '已授权' };
 const serviceLabels = { stopped: '已停止', starting: '启动中', ready: '运行中', error: '启动异常' };
@@ -61,6 +64,7 @@ async function post(path, body) {
   if (!state?.csrf) throw Error('console-disconnected');
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf }, body: JSON.stringify(body) });
   const data = await response.json(); if (!response.ok) throw Error(data.error ?? 'request-failed');
+  return data;
 }
 async function poll() {
   try { const res = await fetch('/api/state', { cache: 'no-store' }); if (!res.ok) throw Error(); const s = await res.json(); offline = false; if (!sending) render(s); }
@@ -85,3 +89,69 @@ $('quit').addEventListener('click', async () => {
   catch (e) { showError(e.message, true); }
 });
 poll();
+
+let sessions = [], selectedSession = null, historyEntries = [], sessionLoading = false, sessionRefreshAt = 0;
+async function sessionRequest(action, args = {}) { return post('/api/sessions', { action, args }); }
+function selectSession(id) {
+  if (selectedSession === id) return;
+  selectedSession = id; historyEntries = []; renderHistory(); $('older-history').hidden = true;
+}
+function renderSessions() {
+  $('session-list').replaceChildren();
+  for (const s of sessions) {
+    const b = document.createElement('button'); b.className = 'session-item' + (s.session === selectedSession ? ' selected' : '');
+    b.textContent = `${s.archived ? '归档' : '当前'} · ${s.title} (${s.messages})`;
+    b.addEventListener('click', async () => { selectSession(s.session); renderSessions(); await loadHistory(); });
+    $('session-list').append(b);
+  }
+  const selected = sessions.find(s => s.session === selectedSession);
+  $('history-title').textContent = selected ? selected.title : '暂无会话，首次微信消息会建立会话';
+  $('switch-session').disabled = !selected?.archived;
+}
+function renderHistory() {
+  const el = $('chat-history'); el.replaceChildren();
+  for (const entry of historyEntries) {
+    const row = document.createElement('article'); row.className = 'chat-entry ' + entry.role;
+    const head = document.createElement('div'); head.className = 'chat-entry-head';
+    const who = entry.role === 'assistant' ? '小鲸鱼' : entry.role === 'bridge' ? '连接提示' : entry.actor.displayName || entry.actor.userId || '用户';
+    head.textContent = who + ' · ' + new Date(entry.created).toLocaleString();
+    const body = document.createElement('p'); body.textContent = entry.text; row.append(head, body); el.append(row);
+  }
+}
+async function loadHistory(older = false) {
+  if (!selectedSession) return;
+  const id = selectedSession;
+  try {
+    const data = await sessionRequest('history', { session: id, ...(older && historyEntries.length ? { before: historyEntries[0].n } : {}) });
+    if (id !== selectedSession) return;
+    const next = older ? [...data.entries, ...historyEntries] : historyEntries.length > 100
+      ? [...new Map([...historyEntries, ...data.entries].map(e => [e.n, e])).values()].sort((a, b) => a.n - b.n) : data.entries;
+    const changed = JSON.stringify(historyEntries) !== JSON.stringify(next); historyEntries = next;
+    if (older || historyEntries.length <= 100) $('older-history').hidden = !data.hasMore;
+    if (changed) renderHistory();
+  } catch (e) { $('session-status').textContent = errors[e.message] ?? `记录读取失败（${e.message}）`; }
+}
+async function refreshSessions() {
+  if (!state?.csrf || sessionLoading) return;
+  sessionLoading = true;
+  try {
+    const data = await sessionRequest('list'); sessions = data.sessions;
+    if (!selectedSession) selectSession(sessions.find(s => !s.archived)?.session ?? sessions[0]?.session);
+    renderSessions(); await loadHistory(); $('session-status').textContent = '只在这里切换会话。聊天记录是本机持久记录，不代表微信投递已确认。';
+  } catch (e) { $('session-status').textContent = errors[e.message] ?? `会话读取失败（${e.message}）`; }
+  finally { sessionLoading = false; }
+}
+$('refresh-sessions').addEventListener('click', refreshSessions);
+$('older-history').addEventListener('click', () => loadHistory(true));
+$('new-session-form').addEventListener('submit', async e => {
+  e.preventDefault(); const button = e.currentTarget.querySelector('button'); button.disabled = true;
+  try { const data = await sessionRequest('create', { title: $('session-title').value }); selectSession(data.session); $('session-title').value = ''; await refreshSessions(); }
+  catch (err) { $('session-status').textContent = errors[err.message] ?? `操作失败（${err.message}）`; }
+  finally { button.disabled = false; }
+});
+$('switch-session').addEventListener('click', async () => {
+  $('switch-session').disabled = true;
+  try { await sessionRequest('switch', { session: selectedSession }); await refreshSessions(); }
+  catch (e) { $('session-status').textContent = errors[e.message] ?? `切换失败（${e.message}）`; }
+});
+setInterval(() => { if (!offline && Date.now() - sessionRefreshAt > 5000) { sessionRefreshAt = Date.now(); void refreshSessions(); } }, 1000);

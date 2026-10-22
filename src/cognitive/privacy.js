@@ -49,7 +49,7 @@ export function forget(store, scope, { eventId = null } = {}) {
       for (const table of ['proposals', 'tasks', 'diaries', 'goals']) store.db.prepare(`DELETE FROM ${table} WHERE scope=?`).run(scope);
       for (const version of store.db.prepare('SELECT * FROM self_versions WHERE scope=?').all(scope)) {
         const model = JSON.parse(version.model);
-        for (const field of SELF_FIELDS) model[field] = model[field].filter(item => !item.evidenceRefs.some(id => deletedMemories.has(id)));
+        for (const field of SELF_FIELDS) model[field] = (model[field] ?? []).filter(item => !item.evidenceRefs.some(id => deletedMemories.has(id)));
         store.db.prepare('UPDATE self_versions SET model=?,change_summary=?,evidence_refs=? WHERE scope=? AND version=?')
           .run(JSON.stringify(model), '用户删除后清理的历史版本（旧摘要已移除）', JSON.stringify(JSON.parse(version.evidence_refs).filter(id => !deletedMemories.has(id))), scope, version.version);
       }
