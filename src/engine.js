@@ -44,7 +44,7 @@ export class Engine {
     dsh.on('request', request => this.task(() => this.onRequest(request)));
     dsh.on('cancelRequest', frame => store.db.prepare("UPDATE pending SET state='stale' WHERE event_id=?").run(frame.eventId));
     dsh.on('disconnected', () => { store.db.prepare("UPDATE pending SET state='stale' WHERE state='pending'").run(); });
-    dsh.on('missing', sid => { const job = store.active(sid); if (job?.account === account.accountId) store.updateJob(job.id, 'review', 'session/not-found'); });
+    dsh.on('missing', sid => { const job = store.active(sid); if (job?.account === account.accountId) { store.updateJob(job.id, 'review', 'session/not-found'); this.cognitive?.idle(sid); } });
     dsh.on('diagnostic', code => log('dsh.connection', { code }));
     dsh.on('remote', frame => {
       if (frame.event === 'api-session/error') {
@@ -127,7 +127,6 @@ export class Engine {
   async submit(job) {
     const mapping = this.store.ensureMapping(job.account, job.user);
     const session = mapping.session;
-    this.cognitive?.bind(job, session);
     const text = this.store.tx(() => {
       const saved = this.store.job(job.id); const payload = JSON.parse(saved.payload);
       if (typeof payload.dshText !== 'string') {
@@ -144,6 +143,7 @@ export class Engine {
       return payload.dshText;
     });
     try {
+      this.cognitive?.bind(job, session);
       const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(JSON.stringify([job.account, job.user])).digest('hex').slice(0, 32));
       fs.mkdirSync(cwd, { recursive: true });
       await this.dsh.rpc('session/create', { sessionId: session, cwd, agentPreset: this.config.dsh.agentPreset }, this.signal);
@@ -336,13 +336,14 @@ export class Engine {
   }
   async run() {
     this.store.recover();
-    this.cognitive?.backfill(this.store);
+    this.cognitive?.restoreActive(this.store);
     for (const row of this.store.db.prepare('SELECT session FROM conversations WHERE account=?').all(this.account.accountId)) this.dsh.follow(row.session);
     const tasks = [this.dsh.run(this.signal), this.poll(), (async () => {
       while (!this.signal.aborted) { await this.tick(); await sleep(100, this.signal).catch(() => {}); }
     })(), (async () => {
       while (!this.signal.aborted) { await this.sendOne(); await sleep(200, this.signal).catch(() => {}); }
     })()];
+    if (this.cognitive) tasks.push(this.cognitive.backfill(this.store).catch(() => log('cognitive.capture-pending', { code: 'history-recovery' })));
     if (this.cognitive) tasks.push((async () => {
       while (!this.signal.aborted) {
         try { await this.cognitive.tick(); } catch { log('cognitive.failed', { code: 'scheduler' }); }

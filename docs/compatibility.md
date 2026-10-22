@@ -1,6 +1,6 @@
 # 兼容性边界
 
-记录日期：2026-10-22；Bridge：1.1.1。
+记录日期：2026-10-22；Bridge：1.2.0。
 
 | 对象 | 依据 | 状态 |
 | --- | --- | --- |
@@ -10,6 +10,7 @@
 | iLink 当前官方源码 | 锁定 Git 提交与协议文档 | Mock 断言请求形状；真实扫码和投递尚待验证 |
 | Windows / Node 24.19.0 | 实际本机 | 已运行自动化与独立 DSH 协议测试 |
 | Python 3.10.11 / 本地 Web UI | 标准库 HTTP + 现有 Node QR 编码器 | 真实独立 DSH/iLink 二维码启停及浏览器布局验证通过；不增加 Python 依赖 |
+| Cognitive v3 / systemPrompt sections/context | 本机 DSH 发布源码、原生注册器和真实模型 | 统一 Self 热更新与兼容模型切换实测；实际角色与局限见 cognitive-architecture.md |
 | Linux / Node 24 | 跨平台设计 | 尚未实机验收，尤其是 Linux 凭证权限及账号锁 |
 
 ## DSH 适配

@@ -1,0 +1,17 @@
+{
+  "version": "1.2.0",
+  "date": "2026-10-22",
+  "runtime": "DSH 0.2.0-rc.2",
+  "realModelCalls": true,
+  "syntheticExperiencesAndDates": true,
+  "simulatedDaysPerInstance": 3,
+  "independentInstances": 2,
+  "acceptedTasks": 12,
+  "failedTasksAfterBoundedRetries": 0,
+  "instances": [
+    { "id": "A", "memoryCount": 3, "finalSelfVersion": 1, "acceptedTasks": 6, "attempts": 7, "selfNoOps": 6 },
+    { "id": "B", "memoryCount": 5, "finalSelfVersion": 1, "acceptedTasks": 6, "attempts": 6, "selfNoOps": 6 }
+  ],
+  "interpretation": "不同经历产生了不同记忆；没有强迫人格更新，不能据此宣称真实长期行为或人格差异已得到证明。",
+  "notVerified": ["真实数周运行", "主观意识", "真实情绪", "长期披露判断质量", "真实微信认知端到端"]
+}

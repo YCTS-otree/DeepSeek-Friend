@@ -1,5 +1,7 @@
 # 运维与恢复
 
+v1.2.0 增加全实例统一 Self/记忆库，默认空闲 15 分钟提取、Asia/Shanghai 03:00 反思。升级时在 Web UI 退出启动器后重新运行，以装入新插件；不要清空微信映射。认知状态、预算、纠正/回滚、原始日志删除边界见 [cognitive-architecture.md](cognitive-architecture.md)。Self 的描述性变化不修改原工具权限。
+
 ## 进程与运行目录
 
 推荐双击 `start-web.bat`，在自动打开的本地 Web UI 点击「启动服务」。Python 统一管理本项目独立 DSH 与 Bridge，网页显示可扫描的 SVG 二维码和验证码交互；详细控制、安全与恢复规则见 [web-launcher.md](web-launcher.md)。切换前先停止旧终端实例。关闭标签页继续运行，「退出启动器」或终端 Ctrl+C 才停止服务。

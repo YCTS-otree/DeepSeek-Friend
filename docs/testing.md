@@ -1,15 +1,17 @@
 # 测试与验收报告
 
-日期：2026-10-22；Bridge 1.1.1；Windows；Node 24.19.0；Python 3.10.11；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。
+日期：2026-10-22；Bridge 1.2.0；Windows；Node 24.19.0；Python 3.10.11；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。认知扩展的细项见 [cognitive-testing.md](cognitive-testing.md)。
 
 ## 已执行结果
 
 | 检查 | 结果与范围 |
 | --- | --- |
 | `npm run check` | src、scripts、tests、DSH 策略模块的 JavaScript 语法检查通过 |
-| 默认 `npm test` | 51 项通过，0 失败，1 项真实 DSH 用例未显式启用时跳过 |
+| 默认 `npm test` | 84 项通过，0 失败，2 项真实服务用例未显式启用时跳过；含 33 项认知测试 |
 | `RUN_DSH_PROTOCOL=1 node --test tests/dsh-live.test.js` | 此前 v1.1.0 真实独立 DSH 协议用例通过；以实际 Administrator 账号、Python 启动器管理的 DSH 运行；本轮身份标注更新未重复连接真实服务 |
 | `python -W error::ResourceWarning -m unittest discover -s tests -p "test_*.py"` | 15 项通过，0 失败、0 跳过；包含本机现有 OpenCV 对 QR 模块的实际解码，不新增 Python 依赖 |
+| `npm run test:cognitive:live` | 1 项真实独立 DSH/模型测试通过：Core、同 Session Self 热装配、实际兼容模型切换和后台 JSON，使用独立 3098/研究 home |
+| `npm run cognitive:eval -- --days 3` | 两组不同合成经历，12/12 任务有界重试后接受；Self 均允许保持初始版本，不冒充真实三日生活 |
 | Python 集成启动器真实启停 | 连续两次启动独立 DSH → 获取官方 iLink QR → 内存解码成功 → 停止自己创建的进程成功；未手机扫码 |
 | Web UI 浏览器验证 | 桌面及 390px 窄屏检查通过，无横向溢出；两种尺寸的真实浏览器截图均被 OpenCV 成功解码（假 QR payload）；启停/验证码 Mock 交互通过，浏览器错误日志为空 |
 | Bridge `npm audit --omit=dev` | 0 个已知漏洞 |

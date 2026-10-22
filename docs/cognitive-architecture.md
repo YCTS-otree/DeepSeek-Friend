@@ -30,4 +30,71 @@ Self Model 的权威存储为 SQLite；Markdown/JSON/versions 是可重建的人
 
 每条入站消息标注经过 Bridge 识别的发送者，记忆检索附带原参与者与时间。Agent 据此自主判断哪些内容适合向当前对象提及、哪些不该透露。统一存储不代表全部内容公开；这是依赖模型判断和规则遵循的披露策略，不能伪称具有按用户存储隔离的硬性保密保证。
 
-后续实现、配置、操作和验收记录将随工作包补充到本文件。
+## 数据与更新流程
+
+`src/cognitive/store.js` 保存统一身份、参与者来源、五类记忆、原始公开事件摘录、FTS5、128 维词项哈希向量、事件关系、Self 版本/提案、日记、目标和任务收据。原 DSH Session 历史保留，认知库不复制 reasoning。用户/助手原文及工具结果在认知索引中脱敏并有长度限制；DSH 原始完整日志仍由 DSH 保存。Self 的专用文件统一在 `data/cognitive/self/`，没有按用户创建不同 Self 的目录。
+
+前台结束并空闲 15 分钟后，创建固定原始事件前缀的 daily 任务，立即把输入快照和 DSH Session/requestId 持久化。后台使用 `weixin-cognitive-worker`，不会向微信发送内容或唤醒原 Session。结果经分类/来源/逐字证据引用校验，记忆、索引、可选 Self 提交、任务收据和水位一次事务写入。相同事实合并引用；纠正通过 supersedes 退休旧条目，旧 Self 引用失效时不再作为有效认识注入。
+
+Dreaming 按本地日历计划，补执行最多每批 31 个缺失日期；补执行使用实际补执行时固定的输入水位，不声称在过去的日期真实做过反思。运行期间开始新对话不会扩大其快照边界。背景任务依赖 Bridge 进程存活，机器关机期间不运行，重启后根据配置补执行。
+
+`self_model_propose/commit/read/history/rollback` 只接受指定的描述性字段，不允许改 identity UUID、CORE、权限和配置。普通提交无需人工逐条批准。稳定 traits/values/preferences 必须有至少两次独立交互且内容不完全重复的外部反馈/可观察结果。纯助手自述、重复自述或调用自身记忆工具的结果不构成独立证据。允许撤回、降低确定性、合并和完全 no-op；完全相同的 Self 连投影文件 mtime 也不改。无效 Self 提案会拒绝并记录验证原因，同时保留独立校验通过的经历，不脚本生成替代人格。
+
+验证检查来源和数据边界，不是形式化的自然语言蕴涵证明。引用确实存在并不证明解释必然正确；语义误解、记忆污染和不恰当披露仍需行为测试与人工复核。真实工具执行 guard、无通用配置写入接口和后台禁用工具，是独立于模型文字的权限边界。
+
+检索组合全文关键词、词项哈希向量、时间、实体、事件关系、持续目标和来源可信度。哈希向量是轻量词项近似，**不是经验证的多语言语义 Embedding 模型**；明显同义词而无实体/关系/词项重合的召回质量仍有限。所有词项命中的旧记忆和关联边可补入最近候选集，不随机遗忘原历史。`memory_history` 查询原始公开历史摘录，`memory_trace` 回溯引用；完整副本可由本机操作者导出。
+
+## 配置 Schema
+
+这些字段位于 `config.json` 的 `cognitive`，省略时采用默认值。完整模板在根目录 `config.example.json`。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| enabled | true | 启用记忆、Self 和后台作业；关闭时仍保留 OTREE/小鲸鱼 Core 与原 Bridge |
+| idleExtractionMinutes | 15 | 从前台交互结束起计算全局空闲；等待工具/澄清/审批时不算空闲 |
+| retrievalTokenBudget | 1600 | 注入记忆载荷的保守 UTF-8 字节上限，逐个添加完整记录 |
+| selfTokenBudget | 2400 | Self 装配载荷上限；超限提交被拒绝，不静默截断身份 |
+| inputTokenBudget | 8000 | 后台任务指令+JSON 载荷的保守字节上限，降低条目数而不截断 JSON |
+| outputTokenBudget | 1800 | 通过 DSH agent/request 设置单次模型请求 maxTokens |
+| workerTimeoutMs | 180000 | 超时只取消该后台 Session |
+| maxAttempts | 3 | 最多尝试次数；重试可能增加总模型费用 |
+| dreaming.enabled | true | 是否执行夜间巩固/反思 |
+| dreaming.time | 03:00 | 24 小时时间 |
+| dreaming.timezone | Asia/Shanghai | IANA 时区；可显式改为其他本地时区 |
+| dreaming.catchUpOnRestart | true | 按持久日期收据补执行 |
+| provider / model | 空 / 空 | 同时为空时继承 DSH；同时指定时仅覆盖后台路由 |
+| reasoningEffort | off | 已核对本机 DeepSeek 适配器支持 off，避免小预算被输出推理占满；空字符串继承，其他值由目标 DSH 适配器校验 |
+
+名称中的 TokenBudget 是预算意图。当前输入/Self/召回使用 UTF-8 字节保守限额，不声称知道所有模型的精确分词；DSH 原生 system/header 等开销不全包含在载荷计数内。maxTokens 的具体推理/输出计费语义由提供方决定，以上不是账户账单硬上限。
+
+## 运维、纠正与删除
+
+先在 Web UI 停止服务，或手动停止 Bridge 与项目独立 DSH。`npm run cognitive -- status` 输出唯一共享库 ID 与脱敏任务状态；下例 `<scope>` 就是该 ID，并非微信用户分区。
+
+```powershell
+npm run cognitive -- self <scope>
+npm run cognitive -- history <scope>
+npm run cognitive -- query <scope> 项目关键词
+npm run cognitive -- raw <scope> 历史关键词
+npm run cognitive -- trace <scope> <memoryId>
+npm run cognitive -- export <scope>
+npm run cognitive -- archive <scope> <memoryId>
+npm run cognitive -- rollback <scope> <version>
+npm run cognitive -- retry <scope> <taskId>
+```
+
+纠正使用 `correct <scope> <memoryId>`，从标准输入读取 `{"text":"明确的更正"}`；它记录为本地操作者声明、新增更正条目并退休旧事实。命令不会自行读取任意凭证文件。导出含私人记忆，保存在 `data/cognitive/exports/`，不要贴到公共日志。
+
+显式删除命令：`forget-event <scope> <eventId> --confirm` / `forget-scope <scope> --confirm`。删除前会要求独立 DSH 端口已经停止，并持有 Bridge 数据锁。事件删除会保守清理同次交互及其派生记忆/索引/Self 引用和自由文本副本，移除相应旧会话映射；全库删除作用于所有参与者的共享认知历史。投影、版本中的被删认识、应用内导出也会清理；旧会话被打上禁止再次认知绑定的标记，防止重新导入。
+
+**该接口不声称删除 DSH 自己的原始日志、提供方记录、操作系统副本或用户另存的备份。** 本机此版本的 Session Controller 未提供已核实的按记录永久删除契约，所以没有直接修改 DSH 日志文件或假装完成全链路抹除。需要完整删除时，应停掉相关上下文，再由操作者按 DSH 自身支持的管理方式处理原始日志/备份；不要打开任何签名私钥。共享库删除是显式用户维护操作，Dreaming 本身从不执行删除或重置会话。
+
+未知后台请求结果使用原 Session/requestId 恢复；已经明确结束但 JSON/校验无效的结果可在新后台上下文重试，并记录旧尝试的收据。成功结果与水位原子提交，不承诺网络意义的严格 Exactly Once。Self 版本冲突不会覆盖新版本；拒绝原因保存在任务 result.validation.self 中。
+
+## 部署与评估
+
+首次安装本扩展必须重启独立服务，使 Preset 装入插件；之后常规 Self 提交不需要重启。旧版本会话首次重新投递时会绑定统一身份，现有微信 Session 映射不删除。修改 CORE 或插件配置需要重启；修改生成的 SELF_MODEL.md 没有效果。
+
+`npm run check`、`npm test`、Python 单元测试不调用真实模型。原生装配测试需要项目已安装的固定 DSH 包（`npm run dsh:setup`）。`npm run test:cognitive:live` 自动使用同一安装包、3098 端口和 `.research/` 内独立 home/data，验证 Core、同 Session 热更新、兼容模型切换和后台 JSON；需要已经授权的 API Key 文件或环境变量，会实际消耗模型额度，不涉及微信。测试不会复用工作 DSH 或项目前台会话。
+
+`npm run cognitive:eval -- --days 3` 使用两组不同的**合成经历和模拟日期**做真实模型评估，执行生产校验和有界重试；结果在 `.research/.../longitudinal-evaluation.json`，供人工复核来源、错误解释和自我结论。版本数量不是奖励指标，连续 no-op 合法。它不是实际连续三日/数周运行的证明。验收结果和未实测边界见 cognitive-testing.md。

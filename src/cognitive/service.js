@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CognitiveStore, budget, clean, digest } from './store.js';
-import { BridgeError, backoff, log } from '../util.js';
+import { BridgeError, backoff, log, sleep } from '../util.js';
 
 export function localClock(now, timezone) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now)).map(x => [x.type, x.value]));
@@ -32,11 +32,11 @@ export class CognitiveService {
     this.sessionRoots.set(session, job.request_id); return scope;
   }
   completed(job, text, outcome = 'completed') {
-    this.idle(job.session, job.updated);
+    if (!this.active.has(job.session) || this.sessionRoots.get(job.session) === job.request_id) this.idle(job.session, job.updated);
     if (this.store.db.prepare('SELECT 1 FROM bridge_receipts WHERE job=?').get(job.id)) return;
     const scope = this.store.scope(job.account, job.user, job.created);
     this.store.tx(() => {
-      this.store.bind(scope, job.session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
+      if (!this.store.binding(job.session)) this.store.bind(scope, job.session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
       this.store.record(scope, { session: job.session, seq: 'bridge-user:' + job.request_id, root: job.request_id, source: 'user_statement', text: JSON.parse(job.payload).text, at: job.created });
       this.store.record(scope, { session: job.session, seq: 'bridge-assistant:' + job.request_id, root: job.request_id, source: 'assistant_narrative', text, at: job.updated });
       this.store.record(scope, { session: job.session, seq: 'bridge-outcome:' + job.request_id, root: job.request_id, source: 'observed_outcome',
@@ -65,17 +65,36 @@ export class CognitiveService {
         ? /(?:web|fetch|browser|read_file)/i.test(call.name) ? 'external_document' : 'tool_result'
         : 'assistant_narrative';
       text = JSON.stringify({ toolName: call?.name ?? 'unknown', ...d });
+      if (call && !/^(?:self_model_|memory_)/.test(call.name)) this.store.record(binding.scope, {
+        session, seq: String(event.seq) + ':observed', root: root ?? this.sessionRoots.get(session) ?? session, source: 'observed_outcome',
+        text: JSON.stringify({ observed: 'tool returned', name: call.name, callId: call.callId, isError: d.message?.isError === true,
+          meaning: '证明执行/阅读事件发生，不证明外部资料内容或任务结论正确。' }),
+      });
     }
     if (event.type === 'model/selection') { source = 'runtime'; text = JSON.stringify(d); }
     if (!source) return;
     this.store.record(binding.scope, { session, seq: String(event.seq), root: root ?? this.sessionRoots.get(session) ?? session, source, text, at: typeof event.time === 'number' ? event.time : this.now() });
   }
-  backfill(bridge) {
+  restoreActive(bridge) {
+    for (const job of bridge.db.prepare("SELECT * FROM jobs WHERE account=? AND state IN ('waiting','submitting') AND session IS NOT NULL").all(this.account.accountId)) {
+      const scope = this.store.scope(job.account, job.user, job.created);
+      this.store.bind(scope, job.session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
+      this.active.add(job.session); this.sessionRoots.set(job.session, job.request_id);
+    }
+  }
+  async backfill(bridge) {
     // Original Bridge jobs/events remain authoritative history; import completed exchanges without resetting Sessions.
-    for (const job of bridge.db.prepare("SELECT * FROM jobs WHERE account=? AND state='done' AND session IS NOT NULL AND error IS NULL ORDER BY created").all(this.account.accountId)) {
-      if (this.store.db.prepare('SELECT 1 FROM bridge_receipts WHERE job=?').get(job.id)) continue;
-      const chunks = bridge.db.prepare("SELECT body FROM outbox WHERE id LIKE ? ORDER BY rowid").all('result:' + job.id + ':%');
-      if (chunks.length) this.completed(job, chunks.map(r => JSON.parse(r.body).msg.item_list[0].text_item.text).join(''));
+    let cursor = 0;
+    while (!this.signal.aborted) {
+      const jobs = bridge.db.prepare("SELECT rowid AS __row,* FROM jobs WHERE account=? AND rowid>? AND state='done' AND session IS NOT NULL AND error IS NULL ORDER BY rowid LIMIT 50").all(this.account.accountId, cursor);
+      if (!jobs.length) return;
+      for (const job of jobs) {
+        cursor = job.__row;
+        if (this.store.db.prepare('SELECT 1 FROM bridge_receipts WHERE job=?').get(job.id)) continue;
+        const chunks = bridge.db.prepare("SELECT body FROM outbox WHERE id LIKE ? ORDER BY rowid").all('result:' + job.id + ':%');
+        if (chunks.length) this.completed(job, chunks.map(r => JSON.parse(r.body).msg.item_list[0].text_item.text).join(''));
+      }
+      await sleep(0, this.signal).catch(() => {});
     }
   }
   createTask(scope, kind, day, rows, boundary) {

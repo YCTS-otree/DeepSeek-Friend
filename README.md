@@ -1,8 +1,22 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.1.1**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
+版本 **1.2.0**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
+
+## Cognitive v3：统一自我与持续记忆
+
+整个实例共用**一个 Self Model、一个统一记忆库、日记与目标状态**，不会按微信身份生成不同人格。每条聊天标明当前发送者，记忆保留原参与者、时间、来源和证据，让 Agent 结合对象与授权判断什么适合说、什么不该说。共享库的披露依赖模型遵循这些规则，不构成按用户存储隔离的保密保证。
+
+受版本控制的 `cognitive/CORE.md` 包含你要求的「花钱养着她的是 OTREE，她是一只快乐的小鲸鱼」。快乐小鲸鱼是初始身份称呼，不要求她永远积极或赞同 OTREE，不宣称真实情绪/意识；初始行为特征和偏好为空。
+
+默认在前台交互结束、全局空闲 **15 分钟**后，通过独立 DSH Session 提取有来源的记忆；每天 **Asia/Shanghai 03:00** 调用 Dreaming 巩固、关联和反思。原微信 DSH Session 不因后台任务而重置。Dreaming 可以连续多日完全不改 Self；允许的变更必须通过专用工具的证据/版本/范围验证。模型调用仍全部由 DSH 执行，后台不能操作 Shell、文件或外部服务。
+
+首次消息后，可在 `data/cognitive/self/SELF_MODEL.md`、`self-state.json`、`versions/` 查看统一 Self 的只读投影；权威数据在 `data/cognitive/cognitive.sqlite`，直接编辑 Markdown 不会改变注入。Self 更新会在原 Session 的下一次原生 Prompt 装配生效，不需要重建会话。**P0/P1 是同一个 system prompt 的分段装配，P2 实际是 DSH 的 user-role 上下文快照，不是模型原生的四级权限。**
+
+升级后请在 Web UI「退出启动器」，重新打开 `start-web.bat` 并启动服务，以加载新插件；既有微信会话映射保留。原 `config.json` 缺失的认知字段使用默认值，也可以参照 `config.example.json` 的 `cognitive` 部分修改。无需安装额外依赖。
+
+部署、预算、受控工具、纠正/删除/导出、研究评测和已知限制详见 [认知架构与操作说明](docs/cognitive-architecture.md) 及 [认知验收报告](docs/cognitive-testing.md)。
 
 ## 推荐：Python 集成 Web 启动器
 
@@ -78,7 +92,7 @@ Linux 使用相同 npm 命令。实现使用跨平台路径、SQLite 与 Linux �
 4. 继续发送相关问题：同一账号和用户复用该 Session。推理中的新消息先持久化排队。
 5. 重启 Bridge 后，微信凭证、同步游标、Session 映射和待发送回复从本地恢复。
 
-当前个人版本将扫码授权者标识为 **OTREE**，每条新提交给 DSH 的聊天正文前都附带「当前与你对话的人是 OTREE。」及用户消息分隔。原始微信正文保留；姓名仅用于让 Agent 了解说话者，不授予额外工具权限。后续手动加入白名单的其他用户不会自动被标为 OTREE。完整提交正文在首次 RPC 前持久化，重试保持相同内容与 requestId；升级前已尝试提交的旧任务沿用原文重试，避免同一请求变更。
+扫码授权者的每条新消息附带「当前与你对话的人是 OTREE。」；其他白名单用户附带各自微信用户标识，不冒用 OTREE。原始正文保留；姓名不授予额外权限。完整提交正文在首次 RPC 前持久化，未知结果重试保持相同内容与 requestId；升级前已尝试提交的旧任务沿用原文重试，避免同一请求变更。
 
 微信内命令均只作用于发送者自己的会话：
 
@@ -90,7 +104,7 @@ Linux 使用相同 npm 命令。实现使用跨平台路径、SQLite 与 Linux �
 | `/answer 编号 答案` | 回答单个澄清问题；多问题使用提示中的 JSON 格式 |
 | `/approve 编号` / `/deny 编号` | 已在本地启用且绑定校验通过的单次审批；默认不开放批准 |
 
-默认 `weixin` Preset 仅挂载 DSH 的 `ask_user_question`。通过 DSH 原生 `tools.restrict` 隐藏所有继承工具，并通过 `tools.guard` 拒绝其他执行，包含 Shell、文件写入、管理员工具和任意 MCP。微信文本不能修改此策略。
+默认 `weixin` Preset 提供 DSH 的 `ask_user_question` 以及受控的 Self Model/记忆工具。原有 DSH `tools.restrict`/`tools.guard` 继续阻止通用 Shell、文件写入、管理员工具和未授权 MCP；Self 工具只可更改认知数据库中的规定字段，不能修改此策略。认知插件本身不限制自定义前台 Preset 的原有工具，后台 Preset 始终不提供外部操作工具。
 
 如果需要更多工具，应由本机操作者编辑独立 DSH Preset/策略，配置 DSH 自己的审批机制，再决定是否开启 `bridge.allowApprovals`。这属于扩大权限的显式本地操作。Bridge 的批准仍需同时满足：账号、发送者、当前 Session、在线 `$events` Client、事件 ID、未过期请求，以及 DSH `approval/asked` 审计与 `tool/call` 精确绑定；只回传 `allowed-once`，不创建永久许可。操作参数无法完整展示或绑定缺失时拒绝。
 

@@ -15,7 +15,7 @@ await new Promise((resolve,reject)=>{const probe=createServer();probe.once('erro
 secureDirectory(base); const home=path.join(base,'home'); fs.mkdirSync(home); const dataDir=path.join(base,'data'); secureDirectory(dataDir);
 const config={ dataDir,dsh:{baseUrl:'http://127.0.0.1:3098',cwd:path.join(base,'workspaces')},cognitive:{outputTokenBudget:1800,workerTimeoutMs:90000} };
 fs.mkdirSync(config.dsh.cwd); const configFile=path.join(base,'config.json'); fs.writeFileSync(configFile,JSON.stringify(config));
-const budgetPlugin=path.join(base,'budget.mjs'); fs.writeFileSync(budgetPlugin,"export function apply(ctx){ctx.on('agent/request',async(_p,next)=>({...await next(),maxTokens:500}));}");
+const budgetPlugin=path.join(base,'budget.mjs'); fs.writeFileSync(budgetPlugin,"export function apply(ctx){ctx.on('agent/request',async(_p,next)=>({...await next(),maxTokens:500,reasoningEffort:'off'}));}");
 const overlay=path.join(base,'patch.yml');
 fs.writeFileSync(overlay,fs.readFileSync('dsh/weixin.patch.yml','utf8')
  .replace('__WEIXIN_POLICY__',JSON.stringify(pathToFileURL(path.join(root,'dsh/weixin-policy.js')).href))
