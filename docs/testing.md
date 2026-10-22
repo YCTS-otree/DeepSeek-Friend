@@ -1,5 +1,7 @@
 # 测试与验收报告
 
+当前 v1.4.0 的完整结果见 [交互扩展验收报告](interaction-testing.md)。下文保留早期版本的测试记录。
+
 日期：2026-10-22；Bridge 1.2.0；Windows；Node 24.19.0；Python 3.10.11；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。认知扩展的细项见 [cognitive-testing.md](cognitive-testing.md)。
 
 ## 已执行结果

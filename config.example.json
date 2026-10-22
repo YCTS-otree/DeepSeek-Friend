@@ -44,5 +44,18 @@
     "concurrency": 4,
     "approvalTimeoutMs": 300000,
     "allowApprovals": false
+  },
+  "interaction": {
+    "enabled": true
+  },
+  "media": {
+    "enabled": true,
+    "baseUrl": "https://novac2c.cdn.weixin.qq.com/c2c",
+    "allowedHosts": [
+      "novac2c.cdn.weixin.qq.com"
+    ],
+    "maxBytes": 8388608,
+    "maxImages": 4,
+    "timeoutMs": 20000
   }
 }

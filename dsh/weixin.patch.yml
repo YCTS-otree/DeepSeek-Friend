@@ -27,6 +27,23 @@
             name: '@deepseek-ai/dsh-tool-ask-user'
             config:
               mode: legacy
+    - id: preset-weixin-test
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: weixin-test
+        name: 独立测试小鲸鱼
+        description: 隔离测试记忆和聊天，不发送微信；可清空应用测试记录
+        plugins:
+          - id: capability-policy
+            name: __WEIXIN_POLICY__
+          - id: cognitive
+            name: __COGNITIVE_PLUGIN__
+            config:
+              test: true
+          - id: questions
+            name: '@deepseek-ai/dsh-tool-ask-user'
+            config:
+              mode: legacy
     - id: preset-cognitive-worker
       name: '@deepseek-ai/dsh-agent-preset'
       config:

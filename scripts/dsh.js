@@ -40,12 +40,12 @@ async function main() {
   secureDirectory(home); secureDirectory(c.dataDir); fs.mkdirSync(c.dsh.cwd, { recursive: true });
   const overlay = path.join(runtime, 'weixin-resolved.patch.yml');
   fs.writeFileSync(overlay, fs.readFileSync(path.join(root, 'dsh/weixin.patch.yml'), 'utf8')
-    .replace('__WEIXIN_POLICY__', JSON.stringify(pathToFileURL(path.join(root, 'dsh/weixin-policy.js')).href)));
+    .replaceAll('__WEIXIN_POLICY__', JSON.stringify(pathToFileURL(path.join(root, 'dsh/weixin-policy.js')).href)));
   fs.writeFileSync(overlay, fs.readFileSync(overlay, 'utf8')
     .replaceAll('__COGNITIVE_PLUGIN__', JSON.stringify(pathToFileURL(path.join(root, 'dsh/cognitive.js')).href)));
   const credentials = apiKeyEnvironment(root);
   const env = { ...credentials.env, DSH_HOME: home };
-  env.DS_FRIEND_COGNITIVE = JSON.stringify({ dir: path.join(c.dataDir, 'cognitive'), config: c.cognitive });
+  env.DS_FRIEND_COGNITIVE = JSON.stringify({ dir: path.join(c.dataDir, 'cognitive'), interaction: c.interaction.enabled, config: { ...c.cognitive, provider: 'deepseek-official', model: 'deepseek-flash' } });
   if (credentials.loaded) log('dsh.api-key-loaded');
   delete env.DSH_WEB_URL; delete env.DSH_LAUNCH_TOKEN; delete env.DSH_COOKIE;
   const child = spawn(process.execPath, [path.join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'),

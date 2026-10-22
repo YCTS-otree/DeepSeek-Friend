@@ -12,6 +12,7 @@ import { Engine } from './engine.js';
 import { login } from './auth.js';
 import { BridgeError, VERSION, log } from './util.js';
 import { LauncherIO } from './launcher-io.js';
+import { control } from './controls.js';
 
 const controller = new AbortController();
 let stoppingRequested = false;
@@ -91,12 +92,7 @@ async function main() {
     store = new Store(path.join(c.dataDir, 'bridge.sqlite'));
     log('bridge.started', { version: VERSION });
     const engine = new Engine(c, store, dsh, client, credentials, controller.signal);
-    if (ui) ui.sessions = (action, args) => {
-      if (['create', 'switch', 'archive'].includes(action) && (engine.busy.size || engine.chains.size)) throw new BridgeError('session-busy');
-      const result = store.sessionControl(action, args);
-      if (['create', 'switch'].includes(action)) dsh.follow(result.session);
-      return result;
-    };
+    if (ui) ui.sessions = (action, args) => control({ store, runtime: engine.runtime, config: c, engine }, action, args);
     await engine.run();
   } finally { controller.abort(); if (unlockAccount) await unlockAccount(); store?.close(); release(); }
 }

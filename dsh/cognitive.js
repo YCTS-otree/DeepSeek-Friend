@@ -5,6 +5,7 @@ import { CognitiveStore, budget } from '../src/cognitive/store.js';
 import { cognitiveConfig } from '../src/cognitive/config.js';
 import { defineTool } from '../.runtime/node_modules/@deepseek-ai/dsh-tools/lib/index.js';
 import { Room } from '../src/cognitive/room.js';
+import { mountInteraction } from './interaction.js';
 
 export const name = 'friend-cognitive';
 export const inject = ['systemPrompt', 'tools'];
@@ -82,8 +83,9 @@ export function apply(ctx, options = {}) {
   const launch = JSON.parse(env); const config = cognitiveConfig(launch.config);
   if (options.worker === true) { installCognitive(ctx, null, config, { worker: true }); return; }
   const core = fs.readFileSync(path.join(root, 'cognitive/CORE.md'), 'utf8');
+  if (launch.interaction !== false) mountInteraction(ctx, path.dirname(path.resolve(launch.dir)));
   if (!config.enabled) { ctx.systemPrompt.section({ name: 'friend:core', order: 15000, interpolate: false, text: core }); return; }
-  const dir = path.resolve(launch.dir);
+  const dir = options.test ? path.join(path.dirname(path.resolve(launch.dir)), 'testing', 'cognitive') : path.resolve(launch.dir);
   const store = new CognitiveStore(dir, config);
   ctx.effect(() => () => store.close());
   installCognitive(ctx, store, config, { core });

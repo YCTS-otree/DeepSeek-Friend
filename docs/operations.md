@@ -50,7 +50,7 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 
 停掉两个进程后备份 `data/` 与 `.runtime/home/`，它们包含敏感文本、上下文令牌和 DSH 自己的凭证。SQLite 如有 WAL/SHM 应保持一致；不要在线只复制主数据库。Windows DPAPI 数据不能简单搬到另一用户/机器。不要打开或检查 DSH 的签名密钥文件。
 
-当前不自动删除历史记录或 vacuum；部署者应监控磁盘占用。需要永久清理时先确定保留与隐私要求，再设计数据库归档。`/reset` 只改变会话映射并停止任务，不删除历史聊天、旧 Session 或用户工作文件。
+当前不自动删除正式聊天或 vacuum；部署者应监控磁盘占用。`/reset` 只提示在 WebUI 新建/切换，不更改会话。正式会话仅归档；测试清理的范围与保留项见下节。
 
 已授权但缺失合法消息标识、上下文或结构异常的入站包会进入 quarantine，与游标在同一事务内保存，避免单个坏包使整批无限重试。status 仅展示数量与原因，不展示敏感原文；当前不自动重放隔离包，须先完成协议适配后由本机操作者审慎恢复。
 
@@ -71,3 +71,17 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 - `cognitive-chat-retention-archive-only`：当前保留策略禁止会话历史破坏性清理，使用归档/纠正。
 
 完整规则见 [sessions-and-room.md](sessions-and-room.md)。
+
+## v1.4 运行控制与图片
+
+退出旧启动器后重新打开 start-web.bat 加载新插件。模型固定为 DeepSeek-V41-Flash，思考深度在「运行控制」设置；单次输出上限不构成累计预算。停止/暂停不会清空上下文。持续运行期间费用与磁盘记录持续累积。
+
+- `test-clear-dsh-running`：Bridge 停止但独立 DSH 仍在运行，无法确认测试 Agent 已停。由启动器连接 Bridge 后清空，或先停止独立 DSH。
+- `test-worker-busy`：等待隔离测试的记忆整理完成。
+- `known-contact-required`：尚无真实合法入站凭据，或指定 recipient 不在已知联系人中；需要联系人先发来消息。
+- `image-too-large` / `image-format` / `image-decrypt`：检查图片大小、格式及官方密钥字段；不会把损坏图片当作已识别内容。
+- `cdn-host-rejected`：官方返回了白名单外目标或异常 URL；先核对官方源码再调整本机配置，不信任聊天提供的下载域名。
+
+主动联系已获得用户授权，但有效 context_token 仍由腾讯决定。服务端明确拒绝进入 failed；结果不明进入 unknown，按原流程核对，不换消息 ID 自动重发。图片上传回执与最终消息分开持久化。
+
+正式思考记录在 data/interaction.sqlite，只从认证控制台读取；不要将数据库或包含私有思考的截图公开。测试清理停止测试 Agent 并清空应用测试记录/记忆，保留历史 Self 原稿、测试房间文件与上游 DSH 原始运行日志，不声称物理擦除。完整说明见 [interaction-v14.md](interaction-v14.md)。

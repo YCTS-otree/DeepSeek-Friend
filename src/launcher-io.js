@@ -21,7 +21,7 @@ export class LauncherIO {
     this.output = output; this.pending = null;
     this.reader = createInterface({ input, crlfDelay: Infinity });
     this.reader.on('line', line => {
-      if (line.length > 1024) return;
+      if (line.length > 65536) return;
       let msg; try { msg = JSON.parse(line); } catch { return; }
       if (msg.command === 'shutdown') shutdown?.();
       if (msg.command === 'open-dsh') Promise.resolve(open?.()).catch(() => this.emit('ui.open-failed'));

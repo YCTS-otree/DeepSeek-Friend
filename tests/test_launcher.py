@@ -80,6 +80,15 @@ class StateTests(unittest.TestCase):
         self.assertNotIn("private-test-history", json.dumps(self.c.snapshot()))
         self.assertEqual(self.c.session_requests, {})
 
+    def test_private_prompt_thought_and_runtime_controls_use_dedicated_ipc(self):
+        def reply(_name, message):
+            self.c._event("bridge", {"event": "ui.sessions", "id": message["id"], "result": {"fixture": message["action"]}})
+            return True
+        with patch.object(self.c, "_alive", return_value=True), patch.object(self.c, "_send", side_effect=reply):
+            for action in ["prompts", "thoughts", "runtime-configure", "alarm-create", "test-clear", "room-info"]:
+                self.assertEqual(self.c.sessions(action, {"session": "test-fixture"})["fixture"], action)
+        self.assertNotIn("test-fixture", json.dumps(self.c.snapshot()))
+
     def test_stopped_service_session_management_is_persistent_and_isolated(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".research") as temp:
             config = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
@@ -246,6 +255,13 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(content)["entries"][0]["text"], "saved output")
             sessions.assert_called_once_with("history", {"session": "fixture"})
+
+    def test_console_controls_accept_bounded_larger_test_text_and_keep_csrf(self):
+        body = json.dumps({"action": "test-send", "args": {"text": "x" * 8000}})
+        with patch.object(self.c, "sessions", return_value={"queued": "fixture"}):
+            self.assertEqual(self.request("POST", "/api/sessions", body, self.auth_headers())[0], 200)
+            self.assertEqual(self.request("POST", "/api/sessions", body, {"Content-Type": "application/json"})[0], 403)
+        self.assertEqual(self.request("POST", "/api/sessions", "x" * 65537, self.auth_headers())[0], 400)
 
     def test_qr_is_image_not_in_state_and_cleared_on_stop(self):
         self.c._event("bridge", {"event": "ui.qr", "svg": qr_svg()})

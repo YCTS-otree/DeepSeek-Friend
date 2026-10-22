@@ -8,6 +8,7 @@ import { loadCredentials } from '../src/security.js';
 import { DshClient } from '../src/dsh.js';
 import { CognitiveStore } from '../src/cognitive/store.js';
 import { CognitiveService } from '../src/cognitive/service.js';
+import { RuntimeStore } from '../src/runtime.js';
 
 test('REAL DSH/model: Core + shared Self hot-update on one existing Session and isolated background JSON turn',
   { skip: process.env.RUN_COGNITIVE_LIVE !== '1', timeout: 180000 }, async () => {
@@ -17,6 +18,7 @@ test('REAL DSH/model: Core + shared Self hot-update on one existing Session and 
     const client = new DshClient({ ...c.dsh, cookie: credential.cookie }); const abort = new AbortController();
     const store = new CognitiveStore(path.join(c.dataDir, 'cognitive'), c.cognitive);
     const scope = store.scope('TEST-ONLY', 'synthetic-evidence'); const session = 'cognitive-live-' + randomUUID();
+    const runtime = new RuntimeStore(c.dataDir); runtime.configure({ continuous: false, maxTokens: 1024, reasoningEffort: 'off' }); runtime.bind(session, 'live-cognitive', 'test');
     store.bind(scope, session, '认知兼容性测试', 'conversation', { displayName: 'OTREE（兼容测试）' });
     let running;
     async function runTurn(text) {
@@ -50,13 +52,11 @@ test('REAL DSH/model: Core + shared Self hot-update on one existing Session and 
       const p = store.propose(scope, { baseVersion: store.current(scope).version, changes: { understanding: [{ text: 'LIVE_HOT_UPDATE_MARKER：这是合成测试数据，不是实际人格结论。', evidenceRefs: [m], confidence: 'tentative' }] }, summary: '实际 DSH 热装配测试' });
       store.commit(scope, p.id);
       const catalog = await client.rpc('session/modelCatalog');
-      const alternate = catalog.groups.flatMap(g => g.models.map(m => ({ provider: g.id, model: m.id })))
-        .find(m => m.provider === catalog.default.provider && m.model !== catalog.default.model);
-      if (alternate) {
-        const switched = await client.rpc('session/selectModel', { sessionId: session, ...alternate });
-        assert.equal(switched.selected.model, alternate.model);
-      }
-      console.log(JSON.stringify({ cognitiveLiveModelSwitch: Boolean(alternate) }));
+      const flash = { provider: 'deepseek-official', model: 'deepseek-flash' };
+      assert.ok(catalog.groups.some(g => g.id === flash.provider && g.models.some(m => m.id === flash.model)));
+      const selected = await client.rpc('session/selectModel', { sessionId: session, ...flash });
+      assert.equal(selected.selected.model, flash.model);
+      console.log(JSON.stringify({ cognitiveLiveModel: 'DeepSeek-V41-Flash' }));
       const second = await runTurn('继续兼容性测试，不要调用工具。只回复 OK。');
       assert.match(second.filter(e => e.type === 'system/message').map(e => JSON.stringify(e.data)).join('\n'), /LIVE_HOT_UPDATE_MARKER/);
       const svc = new CognitiveService(c, client, { accountId: 'TEST-ONLY', ownerId: 'synthetic-evidence' }, abort.signal, { store });
@@ -67,5 +67,5 @@ test('REAL DSH/model: Core + shared Self hot-update on one existing Session and 
       assert.ok(result && typeof result === 'object'); assert.ok(Array.isArray(result.memories));
       svc.applyResult(task, result); assert.equal(store.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.id).state, 'done');
       assert.notEqual(task.session, session); assert.equal(store.binding(session).scope, scope);
-    } finally { abort.abort(); await client.rpc('session/cancel', { sessionId: session }).catch(() => {}); if (running) await running; store.close(); }
+    } finally { abort.abort(); await client.rpc('session/cancel', { sessionId: session }).catch(() => {}); if (running) await running; runtime.close(); store.close(); }
   });

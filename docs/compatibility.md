@@ -1,6 +1,6 @@
 # 兼容性边界
 
-记录日期：2026-10-22；Bridge：1.2.0。
+记录日期：2026-10-22；Bridge：1.4.0。
 
 | 对象 | 依据 | 状态 |
 | --- | --- | --- |
@@ -44,3 +44,11 @@ DSH Cookie 仍代表本机操作者，没有在此版本验证过仅会话级专
 `-14` 是已知会话超时码。HTTP 429 保留同一 outbox 身份退避；未知业务错误不猜测重试合法性，发送网络/5xx/无法解析结果统一保守隔离。未假设服务端支持 client_id 去重、主动发送、固定文本长度上限或任意 IDC 主机。
 
 协议文档说明的是客户端行为，不能证明最小请求或完整服务端契约。当前通信身份沿用所核对的官方客户端字段，真实账号接入可能需要腾讯端新增字段或授权；需通过扫码与投递实测确认。
+
+## v1.4 交互扩展
+
+固定使用实际目录的 DeepSeek-V41-Flash（`deepseek-official/deepseek-flash`）。通过隔离 DSH/真实模型验证原生图片输入、一轮两次消息工具、同轮续行和 low reasoning 记录。off/low/high/max 来自本机适配器；设置下一次请求热读取。DSH 的 `agent.inject` 只接受 user-role UserMessage，内部续行带独立来源标识，不伪称 developer 层。
+
+权限限制改在具体 `agent/created` 上应用：DSH 0.2 会把 Preset standing scope 工具视为具体 Agent 的继承项，在父级 `allow:[]` 会误隐藏项目自身工具。新实现只允许当时注册且位于 SAFE_TOOLS 内的工具，并保留单调执行 guard；未知宿主/Shell/MCP 工具仍拒绝。
+
+腾讯图片 CDN/AES/getuploadurl 字段基于本轮实际官方源码和 Mock。主动联系已经用户授权，但 API 的任意联系人、上下文有效时长、client_id 去重均无新增保证；发送必须复用已有授权联系人的真实入站凭据。详细源码提交、角色、迁移和未验证范围见 [interaction-v14.md](interaction-v14.md)。

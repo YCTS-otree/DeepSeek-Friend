@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 export class BridgeError extends Error {
   constructor(code, message = code, { retryable = false, ambiguous = false } = {}) {
     super(message); this.code = code; this.retryable = retryable; this.ambiguous = ambiguous;

@@ -35,7 +35,7 @@ export class Store {
     // A crashed sender may have succeeded remotely. Never auto-replay this state.
     this.db.exec("UPDATE outbox SET state='unknown',error='process-interrupted' WHERE state='sending'; UPDATE pending SET state='stale' WHERE state IN ('pending','answering')");
   }
-  ingest(account, response, allowed, maxTextChars) {
+  ingest(account, response, allowed, maxTextChars, { imagesEnabled = false, maxImages = 4 } = {}) {
     return this.tx(() => {
       for (const m of response.msgs ?? []) {
         const user = m.from_user_id;
@@ -48,10 +48,13 @@ export class Store {
           this.db.prepare('INSERT OR IGNORE INTO quarantine VALUES(?,?,?,?,?)').run(account, id, invalid, payload, Date.now()); continue;
         }
         const items = m.item_list ?? [];
-        const text = items.filter(i => i?.type === 1 && typeof i.text_item?.text === 'string').map(i => i.text_item.text).join('\n');
-        const supported = items.length > 0 && items.every(i => i?.type === 1 && typeof i.text_item?.text === 'string');
+        const images = items.filter(i => i?.type === 2 && i.image_item).map(i => i.image_item);
+        const rawText = items.filter(i => i?.type === 1 && typeof i.text_item?.text === 'string').map(i => i.text_item.text).join('\n');
+        const text = rawText || (imagesEnabled && images.length ? `[图片 × ${images.length}]` : '');
+        const supported = items.length > 0 && items.every(i => i?.type === 1 && typeof i.text_item?.text === 'string' || imagesEnabled && i?.type === 2 && i.image_item)
+          && images.length <= maxImages;
         if (m.message_state !== undefined && ![0, 2].includes(m.message_state)) continue;
-        const payload = JSON.stringify({ text, context: m.context_token, runId: m.run_id, supported });
+        const payload = JSON.stringify({ text, context: m.context_token, runId: m.run_id, supported, ...(imagesEnabled && images.length ? { images } : {}) });
         const state = supported && text.trim() && text.length <= maxTextChars ? 'queued' : 'rejected';
         const now = Date.now();
         const result = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,state,created,updated) VALUES(?,?,?,?,?,?,?,?,?)')
@@ -62,7 +65,7 @@ export class Store {
           this.db.prepare('UPDATE jobs SET session=? WHERE id=?').run(sid, job.id);
           this.chat('user:' + job.id, sid, 'user', { accountId: account, userId: user }, text, now, job.id);
         }
-        if (result.changes && state === 'rejected') this.reply({ account, user, payload }, '首版只接收非空文本消息，且需在长度限制内。', `unsupported:${account}:${user}:${m.message_id}`);
+        if (result.changes && state === 'rejected') this.reply({ account, user, payload }, '仅接收长度范围内的文本和已启用的图片；请检查图片数量及消息类型。', `unsupported:${account}:${user}:${m.message_id}`);
       }
       if (typeof response.get_updates_buf === 'string') this.set('cursor:' + account, response.get_updates_buf);
     });
@@ -73,11 +76,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS chat_entries(n INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,session TEXT NOT NULL REFERENCES chat_sessions(session),role TEXT NOT NULL,actor TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,job TEXT);
       CREATE INDEX IF NOT EXISTS chat_history ON chat_entries(session,n);
       CREATE TRIGGER IF NOT EXISTS preserve_chat_session BEFORE DELETE ON chat_sessions BEGIN SELECT RAISE(ABORT,'sessions-are-archived-not-deleted'); END;`);
+    if (!this.db.prepare('PRAGMA table_info(chat_sessions)').all().some(c => c.name === 'kind')) this.db.exec("ALTER TABLE chat_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'conversation'");
+    if (!this.db.prepare('PRAGMA table_info(jobs)').all().some(c => c.name === 'kind')) this.db.exec("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'conversation'");
+    this.db.exec("DROP INDEX IF EXISTS single_active_chat; CREATE UNIQUE INDEX single_active_chat ON chat_sessions(kind) WHERE archived=0; DROP TRIGGER IF EXISTS preserve_chat_session; CREATE TRIGGER preserve_chat_session BEFORE DELETE ON chat_sessions WHEN old.kind!='test' BEGIN SELECT RAISE(ABORT,'sessions-are-archived-not-deleted'); END;");
     if (!this.get('managed-sessions')) this.tx(() => {
       const legacy = this.db.prepare('SELECT * FROM conversations ORDER BY rowid').all();
-      for (const row of legacy) this.db.prepare('INSERT OR IGNORE INTO chat_sessions VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, row.cursor);
+      for (const row of legacy) this.db.prepare('INSERT OR IGNORE INTO chat_sessions(session,title,created,archived,cursor) VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, row.cursor);
       // Jobs from interrupted turns keep their original Session; migration never moves a request.
-      for (const row of this.db.prepare('SELECT DISTINCT session FROM jobs WHERE session IS NOT NULL').all()) this.db.prepare('INSERT OR IGNORE INTO chat_sessions VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, -1);
+      for (const row of this.db.prepare('SELECT DISTINCT session FROM jobs WHERE session IS NOT NULL').all()) this.db.prepare('INSERT OR IGNORE INTO chat_sessions(session,title,created,archived,cursor) VALUES(?,?,?,?,?)').run(row.session, '导入的历史会话', Date.now(), 1, -1);
       const first = this.db.prepare("SELECT session FROM jobs WHERE session IS NOT NULL AND state IN ('submitting','waiting','review') ORDER BY created LIMIT 1").get()
         ?? this.db.prepare('SELECT session FROM chat_sessions ORDER BY created,rowid LIMIT 1').get();
       if (first) this.db.prepare('UPDATE chat_sessions SET archived=0 WHERE session=?').run(first.session);
@@ -100,11 +106,11 @@ export class Store {
       this.set('chat-history-imported', '1');
     });
   }
-  session(id) { return this.db.prepare('SELECT * FROM chat_sessions WHERE session=?').get(id); }
-  currentSession() { return this.db.prepare('SELECT * FROM chat_sessions WHERE archived=0').get(); }
+  session(id) { return typeof id === 'string' ? this.db.prepare('SELECT * FROM chat_sessions WHERE session=?').get(id) : undefined; }
+  currentSession(kind = 'conversation') { return this.db.prepare('SELECT * FROM chat_sessions WHERE archived=0 AND kind=?').get(kind); }
   mapping(account, user) { const row = this.currentSession(); return row && { ...row, account, user }; }
   ensureMapping(account, user) {
-    if (!this.currentSession()) this.db.prepare('INSERT INTO chat_sessions VALUES(?,?,?,?,?)').run(randomUUID(), '最初的会话', Date.now(), 0, -1);
+    if (!this.currentSession()) this.db.prepare('INSERT INTO chat_sessions(session,title,created,archived,cursor) VALUES(?,?,?,?,?)').run(randomUUID(), '最初的会话', Date.now(), 0, -1);
     return this.mapping(account, user);
   }
   chat(id, session, role, actor, text, created = Date.now(), job = null) {
@@ -125,33 +131,36 @@ export class Store {
     }
     if (!['create', 'switch', 'archive'].includes(action)) throw new BridgeError('session-action-invalid');
     return this.tx(() => {
-      if (this.db.prepare("SELECT 1 FROM jobs WHERE state IN ('queued','backoff','submitting','waiting','review') LIMIT 1").get()
-        || this.db.prepare("SELECT 1 FROM pending WHERE state IN ('pending','answering','unknown') LIMIT 1").get()
-        || this.db.prepare("SELECT 1 FROM outbox WHERE state IN ('pending','sending','unknown') LIMIT 1").get()) throw new BridgeError('session-busy');
+      const kind = action === 'create' ? args.kind ?? 'conversation' : this.session(args.session)?.kind;
+      if (!['conversation', 'test'].includes(kind)) throw new BridgeError('session-kind-invalid');
+      if (this.db.prepare("SELECT 1 FROM jobs j JOIN chat_sessions s ON s.session=j.session WHERE s.kind=? AND j.state IN ('queued','backoff','submitting','waiting','review') LIMIT 1").get(kind)
+        || this.db.prepare("SELECT 1 FROM pending p JOIN chat_sessions s ON s.session=p.session WHERE s.kind=? AND p.state IN ('pending','answering','unknown') LIMIT 1").get(kind)
+        || kind === 'conversation' && this.db.prepare("SELECT 1 FROM outbox WHERE state IN ('pending','sending','unknown') LIMIT 1").get()) throw new BridgeError('session-busy');
       let id = args.session;
       if (action === 'create') {
         if (args.title !== undefined && typeof args.title !== 'string') throw new BridgeError('session-title-invalid');
         const title = args.title?.trim() || '新的会话';
         if (typeof title !== 'string' || title.length > 100 || clean(title) !== title) throw new BridgeError('session-title-invalid');
         id = randomUUID();
-        this.db.prepare('INSERT INTO chat_sessions VALUES(?,?,?,?,?)').run(id, title, Date.now(), 1, -1);
+        this.db.prepare('INSERT INTO chat_sessions(session,title,created,archived,cursor,kind) VALUES(?,?,?,?,?,?)').run(id, title, Date.now(), 1, -1, kind);
       } else if (!this.session(id)) throw new BridgeError('session-not-found');
       if (action === 'archive') {
-        if (this.currentSession()?.session === id) throw new BridgeError('session-active-archive');
+        if (this.currentSession(kind)?.session === id) throw new BridgeError('session-active-archive');
         this.db.prepare('UPDATE chat_sessions SET archived=1 WHERE session=?').run(id);
       } else {
-        this.db.prepare('UPDATE chat_sessions SET archived=1 WHERE archived=0').run();
+        this.db.prepare('UPDATE chat_sessions SET archived=1 WHERE archived=0 AND kind=?').run(kind);
         this.db.prepare('UPDATE chat_sessions SET archived=0 WHERE session=?').run(id);
       }
       return { session: id, ...this.sessionControl('list') };
     });
   }
-  job(id) { return this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id); }
+  job(id) { return typeof id === 'string' ? this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id) : undefined; }
   updateJob(id, state, error = null, retryAt = 0) { this.db.prepare('UPDATE jobs SET state=?,error=?,retry_at=?,updated=? WHERE id=?').run(state, error, retryAt, Date.now(), id); }
   reply(job, text, id, maxChars = 2000) {
     const sid = this.job(job.id)?.session ?? job.session;
+    if (this.session(sid)?.kind === 'test' || job.kind === 'alarm') { this.chat('bridge:' + id, sid, 'bridge', {}, text, Date.now(), job.id); return; }
     // Agent text is stored from durable DSH events; transport/control notices have a distinct role.
-    if (!id.startsWith('result:')) this.chat('bridge:' + id, sid, 'bridge', {}, text, Date.now(), job.id);
+    if (!id.startsWith('result:') && !id.startsWith('emission:')) this.chat('bridge:' + id, sid, 'bridge', {}, text, Date.now(), job.id);
     const p = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
     const chars = Array.from(text); let part = 0;
     for (let start = 0; start < chars.length; start += maxChars) {

@@ -19,6 +19,7 @@ export class CognitiveService {
   constructor(config, dsh, account, signal, { now = () => Date.now(), store } = {}) {
     this.config = config.cognitive; this.dshConfig = config.dsh; this.dsh = dsh; this.account = account; this.signal = signal; this.now = now;
     this.store = store ?? new CognitiveStore(path.join(config.dataDir, 'cognitive'), this.config);
+    this.test = config.cognitiveTest === true;
     this.running = null; this.listeners = new Set(); this.sessionRoots = new Map(); this.active = new Set();
     this.store.db.exec('CREATE TABLE IF NOT EXISTS bridge_receipts(job TEXT PRIMARY KEY,scope TEXT NOT NULL);');
   }
@@ -28,7 +29,7 @@ export class CognitiveService {
     if (!fs.existsSync(path.join(this.store.dir, 'self/self-state.json'))) this.store.mirror(scope);
     this.store.bind(scope, session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
     this.store.activity(scope, this.now());
-    this.store.record(scope, { session, seq: 'bridge-user:' + job.request_id, root: job.request_id, source: 'user_statement', text: JSON.parse(job.payload).text, at: job.created });
+    this.store.record(scope, { session, seq: 'bridge-user:' + job.request_id, root: job.request_id, source: job.kind === 'alarm' ? 'runtime' : 'user_statement', text: JSON.parse(job.payload).text, at: job.created });
     this.sessionRoots.set(session, job.request_id); return scope;
   }
   completed(job, text, outcome = 'completed') {
@@ -37,14 +38,14 @@ export class CognitiveService {
     const scope = this.store.scope(job.account, job.user, job.created);
     this.store.tx(() => {
       if (!this.store.binding(job.session)) this.store.bind(scope, job.session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
-      this.store.record(scope, { session: job.session, seq: 'bridge-user:' + job.request_id, root: job.request_id, source: 'user_statement', text: JSON.parse(job.payload).text, at: job.created });
+      this.store.record(scope, { session: job.session, seq: 'bridge-user:' + job.request_id, root: job.request_id, source: job.kind === 'alarm' ? 'runtime' : 'user_statement', text: JSON.parse(job.payload).text, at: job.created });
       this.store.record(scope, { session: job.session, seq: 'bridge-assistant:' + job.request_id, root: job.request_id, source: 'assistant_narrative', text, at: job.updated });
       this.store.record(scope, { session: job.session, seq: 'bridge-outcome:' + job.request_id, root: job.request_id, source: 'observed_outcome',
         text: JSON.stringify({ observed: 'DSH turn ended', reason: outcome, meaning: '仅表示运行结束，不证明任务或工具结果正确。' }), at: job.updated });
       this.store.db.prepare('INSERT INTO bridge_receipts VALUES(?,?)').run(job.id, scope);
     });
   }
-  actor(job) { return { accountId: job.account, userId: job.user,
+  actor(job) { if (job.kind === 'alarm') return { displayName: '内部闹钟/本机唤醒', kind: 'runtime' }; return { accountId: job.account, userId: job.user,
     displayName: job.account === this.account.accountId && job.user === this.account.ownerId ? 'OTREE' : '微信用户 ' + job.user }; }
   idle(session, at = this.now()) {
     this.active.delete(session); const binding = this.store.binding(session);
@@ -61,11 +62,11 @@ export class CognitiveService {
       const call = this.store.db.prepare("SELECT text FROM raw_events WHERE scope=? AND session=? AND source='tool_action' ORDER BY n DESC LIMIT 200").all(binding.scope, session)
         .flatMap(r => { try { return [JSON.parse(r.text)]; } catch { return []; } }).find(r => r.callId === d.message?.toolCallId);
       // Reading one's own model/diary/memory is not independent evidence about one's traits.
-      source = call && !/^(?:self_model_|memory_|room_)/.test(call.name)
+      source = call && !/^(?:self_model_|memory_|room_|sticker_|alarm_)/.test(call.name)
         ? /(?:web|fetch|browser|read_file)/i.test(call.name) ? 'external_document' : 'tool_result'
         : 'assistant_narrative';
       text = JSON.stringify({ toolName: call?.name ?? 'unknown', ...d });
-      if (call && !/^(?:self_model_|memory_|room_)/.test(call.name)) this.store.record(binding.scope, {
+      if (call && !/^(?:self_model_|memory_|room_|sticker_|alarm_)/.test(call.name)) this.store.record(binding.scope, {
         session, seq: String(event.seq) + ':observed', root: root ?? this.sessionRoots.get(session) ?? session, source: 'observed_outcome',
         text: JSON.stringify({ observed: 'tool returned', name: call.name, callId: call.callId, isError: d.message?.isError === true,
           meaning: '证明执行/阅读事件发生，不证明外部资料内容或任务结论正确。' }),
@@ -77,6 +78,7 @@ export class CognitiveService {
   }
   restoreActive(bridge) {
     for (const job of bridge.db.prepare("SELECT * FROM jobs WHERE account=? AND state IN ('waiting','submitting') AND session IS NOT NULL").all(this.account.accountId)) {
+      if ((bridge.session(job.session)?.kind === 'test') !== this.test) continue;
       const scope = this.store.scope(job.account, job.user, job.created);
       this.store.bind(scope, job.session, JSON.parse(job.payload).text, 'conversation', this.actor(job));
       this.active.add(job.session); this.sessionRoots.set(job.session, job.request_id);
@@ -90,9 +92,13 @@ export class CognitiveService {
       if (!jobs.length) return;
       for (const job of jobs) {
         cursor = job.__row;
+        if ((bridge.session(job.session)?.kind === 'test') !== this.test) continue;
         if (this.store.db.prepare('SELECT 1 FROM bridge_receipts WHERE job=?').get(job.id)) continue;
         const chunks = bridge.db.prepare("SELECT body FROM outbox WHERE id LIKE ? ORDER BY rowid").all('result:' + job.id + ':%');
-        if (chunks.length) this.completed(job, chunks.map(r => JSON.parse(r.body).msg.item_list[0].text_item.text).join(''));
+        const end = job.turn == null ? null : bridge.db.prepare("SELECT data FROM events WHERE session=? AND type='turn/end' ORDER BY seq DESC").all(job.session)
+          .map(r => JSON.parse(r.data)).find(e => e.turn === job.turn);
+        const emitted = bridge.db.prepare("SELECT text FROM chat_entries WHERE job=? AND role='assistant' ORDER BY n").all(job.id);
+        if (chunks.length || end) this.completed(job, chunks.length ? chunks.map(r => JSON.parse(r.body).msg.item_list[0].text_item.text).join('') : emitted.map(r => r.text).join('\n\n'), end?.reason?.kind ?? 'completed');
       }
       await sleep(0, this.signal).catch(() => {});
     }

@@ -66,8 +66,10 @@ test('complete MOCK workflow: iLink HTTP polls → DSH RPC/WS → durable reply 
 });
 test('default DSH policy restricts inherited capabilities and denies attempted shell/write/MCP calls', () => {
   let restriction; let guard;
-  apply({ tools: { restrict: value => { restriction = value; }, guard: check => { guard = check; } } });
-  assert.deepEqual(restriction, { allow: [] });
+  let created;
+  apply({ on: (event, fn) => { assert.equal(event, 'agent/created'); created = fn; }, tools: { guard: check => { guard = check; } } });
+  created({ agent: { ctx: { tools: { schemas: () => [{ name: 'weixin_send_message' }, { name: 'room_read' }, { name: 'bash' }], restrict: value => { restriction = value; } } } } });
+  assert.deepEqual(restriction, { allow: ['weixin_send_message', 'room_read'] });
   assert.equal(guard({ name: 'ask_user_question' }), undefined);
   for (const name of ['pwsh', 'bash', 'write', 'edit', 'mcp__dangerous__exec', 'subagent', 'run_code', 'cordis_inspect_list']) assert.equal(typeof guard({ name }), 'string');
 });

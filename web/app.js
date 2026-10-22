@@ -18,6 +18,13 @@ const errors = {
   'session-busy': '当前仍有任务、审批或待发送消息。请先等其结束；结果不明的任务需在本机核对后处理。',
   'session-active-archive': '先新建或切换到其他会话，当前会话才会归档。',
   'session-result-unknown': '会话操作结果暂未确认，请刷新列表核对，避免重复新建。',
+  'bridge-not-ready': '请先启动服务，再发送测试消息或唤醒她。',
+  'test-worker-busy': '测试空间正在整理记忆，请等这次后台任务结束再清空。',
+  'test-clear-dsh-running': 'DSH 正在单独运行。请由此启动器启动 Bridge 后清空，或先停止独立 DSH，以保证测试任务已停止。',
+  'test-session-required': '这项操作仅适用于独立测试会话。',
+  'session-not-current': '请先切换到这个会话，再发送测试消息或唤醒。',
+  'runtime-settings-invalid': '请检查单次输出上限、思考档位和间隔；运行没有累计预算上限。',
+  'interaction-disabled': '此配置关闭了交互扩展。请启用 interaction.enabled 并重启独立 DSH/Bridge。',
 };
 const loginLabels = { idle: '尚未连接', refreshing: '正在获取二维码', waiting: '等待扫码', scanned: '等待手机确认', verify: '需要验证码', confirming: '正在验证', ready: '已授权' };
 const serviceLabels = { stopped: '已停止', starting: '启动中', ready: '运行中', error: '启动异常' };
@@ -95,18 +102,25 @@ async function sessionRequest(action, args = {}) { return post('/api/sessions', 
 function selectSession(id) {
   if (selectedSession === id) return;
   selectedSession = id; historyEntries = []; renderHistory(); $('older-history').hidden = true;
+  thoughtEntries = []; $('thought-records').replaceChildren(); $('older-thoughts').hidden = true;
+  promptData = null; $('prompt-content').textContent = '正在读取所选会话…'; void refreshActivePanel();
 }
 function renderSessions() {
   $('session-list').replaceChildren();
   for (const s of sessions) {
     const b = document.createElement('button'); b.className = 'session-item' + (s.session === selectedSession ? ' selected' : '');
-    b.textContent = `${s.archived ? '归档' : '当前'} · ${s.title} (${s.messages})`;
+    b.textContent = `${s.kind === 'test' ? '测试 · ' : ''}${s.archived ? '归档' : '当前'} · ${s.title} (${s.messages})`;
     b.addEventListener('click', async () => { selectSession(s.session); renderSessions(); await loadHistory(); });
     $('session-list').append(b);
   }
   const selected = sessions.find(s => s.session === selectedSession);
   $('history-title').textContent = selected ? selected.title : '暂无会话，首次微信消息会建立会话';
   $('switch-session').disabled = !selected?.archived;
+  $('test-controls').hidden = selected?.kind !== 'test';
+  $('context-note').textContent = selected?.kind === 'test' ? '测试空间 · 不影响微信当前会话' : '查看不等于切换微信会话';
+  const picker = $('context-session'); picker.replaceChildren();
+  for (const s of sessions) { const option = document.createElement('option'); option.value = s.session; option.textContent = (s.kind === 'test' ? '测试 · ' : '') + (s.archived ? '归档 · ' : '当前 · ') + s.title; picker.append(option); }
+  picker.value = selectedSession ?? '';
 }
 function renderHistory() {
   const el = $('chat-history'); el.replaceChildren();
@@ -136,8 +150,13 @@ async function refreshSessions() {
   sessionLoading = true;
   try {
     const data = await sessionRequest('list'); sessions = data.sessions;
-    if (!selectedSession) selectSession(sessions.find(s => !s.archived)?.session ?? sessions[0]?.session);
+    if (!sessions.some(s => s.session === selectedSession)) selectSession(sessions.find(s => !s.archived && s.kind !== 'test')?.session ?? sessions[0]?.session);
     renderSessions(); await loadHistory(); $('session-status').textContent = '只在这里切换会话。聊天记录是本机持久记录，不代表微信投递已确认。';
+    if (!$('room-path').dataset?.loaded) {
+      const room = await sessionRequest('room-info'); $('room-path').textContent = room.location;
+      if ($('room-path').dataset) $('room-path').dataset.loaded = 'true';
+      $('copy-room').disabled = false; $('room-status').textContent = room.exists ? '已创建 · 重启与切换会话后保留' : '首次启动独立 DSH 并加载插件后创建';
+    }
   } catch (e) { $('session-status').textContent = errors[e.message] ?? `会话读取失败（${e.message}）`; }
   finally { sessionLoading = false; }
 }
@@ -145,7 +164,7 @@ $('refresh-sessions').addEventListener('click', refreshSessions);
 $('older-history').addEventListener('click', () => loadHistory(true));
 $('new-session-form').addEventListener('submit', async e => {
   e.preventDefault(); const button = e.currentTarget.querySelector('button'); button.disabled = true;
-  try { const data = await sessionRequest('create', { title: $('session-title').value }); selectSession(data.session); $('session-title').value = ''; await refreshSessions(); }
+  try { const data = await sessionRequest('create', { title: $('session-title').value, kind: $('session-kind').value }); selectSession(data.session); $('session-title').value = ''; await refreshSessions(); }
   catch (err) { $('session-status').textContent = errors[err.message] ?? `操作失败（${err.message}）`; }
   finally { button.disabled = false; }
 });
@@ -155,3 +174,77 @@ $('switch-session').addEventListener('click', async () => {
   catch (e) { $('session-status').textContent = errors[e.message] ?? `切换失败（${e.message}）`; }
 });
 setInterval(() => { if (!offline && Date.now() - sessionRefreshAt > 5000) { sessionRefreshAt = Date.now(); void refreshSessions(); } }, 1000);
+$('copy-room').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('room-path').textContent); $('room-status').textContent = '地址已复制'; }
+  catch { $('room-status').textContent = '请手动选择上方地址复制'; }
+});
+
+let currentPage = 'overview', settingsDirty = false, promptData = null, thoughtEntries = [], panelLoading = false;
+function failNotice(id, e) { $(id).textContent = errors[e.message] ?? `操作未完成（${e.message}）`; }
+function route() {
+  const name = typeof location === 'undefined' ? 'overview' : location.hash.slice(1);
+  currentPage = ['overview', 'sessions', 'controls', 'thoughts', 'identity'].includes(name) ? name : 'overview';
+  const titles = { overview: ['让微信，连上你的 Agent。', '启动服务，扫码授权，再回到微信开始对话。'], sessions: ['每段相遇，都有记录。', '正式会话归档保留；测试会话独立运行，可以清空。'], controls: ['给她自由，也保留掌控。', '切换思考深度，允许持续运行，或随时暂停与唤醒。'], thoughts: ['思考、安静和下一次醒来。', '查看本机私有记录，以及她为自己设置的小闹钟。'], identity: ['她的自我，和她的小房间。', '查看真实 Prompt 装配、历史 SYS 备份和持久空间。'] };
+  $('intro-title').textContent = titles[currentPage][0]; $('intro-description').textContent = titles[currentPage][1];
+  for (const el of document.querySelectorAll('[data-page]')) el.hidden = el.dataset.page !== currentPage;
+  for (const link of document.querySelectorAll('.console-nav a')) { const active = link.getAttribute('href') === '#' + currentPage; link.setAttribute('aria-current', active ? 'page' : 'false'); }
+  void refreshActivePanel();
+}
+async function loadRuntime() {
+  const data = await sessionRequest('runtime-status');
+  if (!settingsDirty) { $('reasoning').value = data.settings.reasoningEffort; $('max-tokens').value = data.settings.maxTokens;
+    $('continue-delay').value = data.settings.continueDelayMs; $('continuous').checked = data.settings.continuous; $('paused').checked = data.settings.paused; }
+  $('runtime-jobs').textContent = JSON.stringify({ model: data.settings.name, paused: data.settings.paused, tasks: data.jobs, contexts: data.contexts, deliveries: data.deliveries }, null, 2);
+}
+function showPrompt() {
+  if (!promptData) return;
+  const name = $('prompt-source').value || 'core', value = promptData[name];
+  $('prompt-content').textContent = name === 'assembled' ? value?.text ?? '该会话尚未记录实际装配。运行一次后可查看。'
+    : typeof value === 'string' ? value : value ? JSON.stringify(value, null, 2) : '尚未初始化 Self Model；首次执行时载入 v0.1.0。';
+}
+async function loadPrompts() {
+  const id = selectedSession, data = await sessionRequest('prompts', { session: id }); if (id !== selectedSession) return;
+  promptData = data; showPrompt();
+  const room = await sessionRequest('room-info'); $('room-path').textContent = room.location; $('copy-room').disabled = false;
+  $('room-status').textContent = room.exists ? '已创建 · 重启与切换会话后保留' : '首次启动并加载认知插件后创建';
+}
+async function loadThoughts(older = false) {
+  if (!selectedSession) { $('thought-records').textContent = '请选择要查看的会话。'; return; }
+  const id = selectedSession, data = await sessionRequest('thoughts', { session: id, ...(older && thoughtEntries.length ? { before: thoughtEntries[0].n } : {}) });
+  if (id !== selectedSession) return;
+  const next = older ? [...data.entries, ...thoughtEntries] : thoughtEntries.length > 30 ? [...new Map([...thoughtEntries, ...data.entries].map(e => [e.n, e])).values()].sort((a, b) => a.n - b.n) : data.entries;
+  if (JSON.stringify(next) !== JSON.stringify(thoughtEntries)) {
+    thoughtEntries = next; $('thought-records').replaceChildren();
+    for (const entry of thoughtEntries) { const article = document.createElement('article'); article.className = 'thought-entry';
+      const title = document.createElement('strong'); title.textContent = ({ reasoning: '思考', note: '私有笔记', usage: '本次用量' }[entry.kind] ?? entry.kind) + ' · ' + new Date(entry.created).toLocaleString();
+      const pre = document.createElement('pre'); pre.className = 'record-view'; pre.textContent = entry.text; article.append(title, pre); $('thought-records').append(article); }
+  }
+  if (older || thoughtEntries.length <= 30) $('older-thoughts').hidden = !data.hasMore;
+}
+async function loadAlarms() {
+  $('alarm-records').replaceChildren(); if (!selectedSession) return;
+  const id = selectedSession, data = await sessionRequest('alarms', { session: id }); if (id !== selectedSession) return;
+  for (const a of data.alarms) { const row = document.createElement('div'); row.className = 'alarm-row'; const label = document.createElement('span');
+    label.textContent = new Date(a.due).toLocaleString() + ' · ' + ({ scheduled: '等待响铃', fired: '已唤醒', cancelled: '已取消' }[a.state] ?? a.state) + (a.note ? ' · ' + a.note : ''); row.append(label);
+    if (a.state === 'scheduled') { const button = document.createElement('button'); button.className = 'text-button'; button.textContent = '取消'; button.addEventListener('click', async () => { try { await sessionRequest('alarm-cancel', { session: a.session, id: a.id }); await loadAlarms(); } catch (e) { failNotice('mind-notice', e); } }); row.append(button); }
+    $('alarm-records').append(row); }
+}
+async function refreshActivePanel() {
+  if (!state?.csrf || panelLoading) return; panelLoading = true;
+  try { if (currentPage === 'controls') await loadRuntime(); if (currentPage === 'thoughts') { await loadThoughts(); await loadAlarms(); } if (currentPage === 'identity') await loadPrompts(); }
+  catch (e) { failNotice(currentPage === 'identity' ? 'prompt-notice' : currentPage === 'thoughts' ? 'mind-notice' : 'runtime-notice', e); }
+  finally { panelLoading = false; }
+}
+$('context-session').addEventListener('change', async () => { selectSession($('context-session').value); renderSessions(); await loadHistory(); });
+$('settings-form').addEventListener('input', () => { settingsDirty = true; });
+$('settings-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('runtime-configure', { reasoningEffort: $('reasoning').value, maxTokens: Number($('max-tokens').value), continueDelayMs: Number($('continue-delay').value), continuous: $('continuous').checked, paused: $('paused').checked }); settingsDirty = false; $('runtime-notice').textContent = '已保存，下一次模型请求即生效。'; await loadRuntime(); } catch (err) { failNotice('runtime-notice', err); } });
+$('stop-thinking').addEventListener('click', async () => { try { if (!selectedSession) throw Error('session-not-current'); await sessionRequest('runtime-stop', { session: selectedSession }); $('runtime-notice').textContent = '已请求停止，原上下文和记录保留。'; await loadRuntime(); } catch (e) { failNotice('runtime-notice', e); } });
+$('wake-thinking').addEventListener('click', async () => { try { if (!selectedSession) throw Error('session-not-current'); await sessionRequest('runtime-configure', { paused: false }); await sessionRequest('runtime-wake', { session: selectedSession }); settingsDirty = false; $('runtime-notice').textContent = '已恢复并排队唤醒所选会话。'; await loadRuntime(); } catch (e) { failNotice('runtime-notice', e); } });
+$('test-chat-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('test-send', { session: selectedSession, text: $('test-text').value }); $('test-text').value = ''; await refreshSessions(); } catch (err) { failNotice('session-status', err); } });
+$('clear-tests').addEventListener('click', async () => { if (!confirm('清空全部测试会话、测试思考及测试记忆？正式会话和正式记忆保持保留。DSH 原始日志不会在此物理删除。')) return;
+  try { const result = await sessionRequest('test-clear', { confirm: true }); selectedSession = null; historyEntries = []; thoughtEntries = []; renderHistory(); await refreshSessions(); $('session-status').textContent = result.upstream; } catch (e) { failNotice('session-status', e); } });
+$('refresh-prompts').addEventListener('click', () => refreshActivePanel()); $('prompt-source').addEventListener('change', showPrompt);
+$('refresh-thoughts').addEventListener('click', () => refreshActivePanel()); $('older-thoughts').addEventListener('click', () => { void loadThoughts(true).catch(e => failNotice('mind-notice', e)); });
+$('alarm-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('alarm-create', { session: selectedSession, at: new Date($('alarm-at').value).toISOString(), note: $('alarm-note').value }); $('alarm-note').value = ''; $('mind-notice').textContent = '闹钟已保存。'; await loadAlarms(); } catch (err) { failNotice('mind-notice', err); } });
+if (typeof window !== 'undefined') { window.addEventListener('hashchange', route); route(); }
+setInterval(() => { if (!offline) void refreshActivePanel(); }, 5000);

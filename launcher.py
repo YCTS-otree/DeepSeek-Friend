@@ -47,6 +47,7 @@ class Controller:
         self.commands = queue.Queue()
         self.logs = collections.deque(maxlen=80)
         self.session_requests = {}
+        self.session_commands_lock = threading.Lock()
         self.state = {"version": VERSION, "dsh": "stopped", "bridge": "stopped",
                       "login": "idle", "verifyId": None, "qrRevision": 0,
                       "busy": False, "error": None, "baseUrl": "http://127.0.0.1:3088"}
@@ -275,7 +276,11 @@ class Controller:
             self.state.update(verifyId=None, login="confirming")
 
     def sessions(self, action, args=None):
-        if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive"} or (args is not None and not isinstance(args, dict)):
+        with self.session_commands_lock:
+            return self._sessions(action, args)
+
+    def _sessions(self, action, args=None):
+        if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive", "room-info", "runtime-status", "runtime-configure", "runtime-stop", "runtime-wake", "thoughts", "prompts", "alarms", "alarm-create", "alarm-cancel", "test-send", "test-clear"} or (args is not None and not isinstance(args, dict)):
             raise LauncherError("session-action-invalid")
         request_id = str(uuid.uuid4())
         pending = queue.Queue(maxsize=1)
@@ -451,7 +456,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(403, {"error": "request-rejected"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 1024 or self.headers.get_content_type() != "application/json":
+            limit = 65536 if self.path == "/api/sessions" else 1024
+            if not 0 < size <= limit or self.headers.get_content_type() != "application/json":
                 raise ValueError()
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
@@ -478,6 +484,7 @@ def main():
     parser = argparse.ArgumentParser(description="DeepSeek:Friend 本地 Web 启动器")
     parser.add_argument("--port", type=int, default=3090)
     parser.add_argument("--no-browser", action="store_true", help="仅运行服务，不自动打开浏览器")
+    parser.add_argument("--start", action="store_true", help="打开控制台后自动启动独立 DSH 和 Bridge")
     args = parser.parse_args()
     controller = Controller()
     try:
@@ -495,6 +502,8 @@ def main():
     print("浏览器将自动打开。请点击「启动服务」；关闭此终端会停止本启动器管理的服务。", flush=True)
     if not args.no_browser:
         webbrowser.open(server.launch_url())
+    if args.start:
+        controller.enqueue("start")
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

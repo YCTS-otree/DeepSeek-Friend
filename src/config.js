@@ -31,6 +31,10 @@ export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', en
       concurrency: input.bridge?.concurrency ?? 4, approvalTimeoutMs: input.bridge?.approvalTimeoutMs ?? 300_000,
       allowApprovals: input.bridge?.allowApprovals ?? false },
     cognitive: cognitiveConfig(input.cognitive),
+    interaction: { enabled: input.interaction?.enabled ?? true },
+    media: { enabled: input.media?.enabled ?? true, baseUrl: input.media?.baseUrl ?? 'https://novac2c.cdn.weixin.qq.com/c2c',
+      allowedHosts: input.media?.allowedHosts ?? ['novac2c.cdn.weixin.qq.com'], maxBytes: input.media?.maxBytes ?? 8 * 1024 * 1024,
+      maxImages: input.media?.maxImages ?? 4, timeoutMs: input.media?.timeoutMs ?? 20000 },
   };
   const u = requireLoopback(c.dsh.baseUrl);
   if (u.port === '3080') throw new BridgeError('working-dsh-refused', '3080 是工作 DSH 端口；请使用独立实例（默认 3088）');
@@ -49,5 +53,12 @@ export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', en
   if (typeof c.weixin.enabled !== 'boolean' || typeof allowApprovals !== 'boolean'
     || typeof c.weixin.clientVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(c.weixin.clientVersion)
     || c.weixin.clientVersion.split('.').some(x => Number(x) > 255) || typeof c.weixin.appId !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(c.weixin.appId)) throw new BridgeError('config-types');
+  if (typeof c.interaction.enabled !== 'boolean' || typeof c.media.enabled !== 'boolean' || !Array.isArray(c.media.allowedHosts)
+    || c.media.allowedHosts.some(h => typeof h !== 'string' || !/^[a-z0-9.-]+$/.test(h))
+    || !Number.isSafeInteger(c.media.maxBytes) || c.media.maxBytes < 1024 || c.media.maxBytes > 20 * 1024 * 1024
+    || !Number.isSafeInteger(c.media.maxImages) || c.media.maxImages < 1 || c.media.maxImages > 8
+    || !Number.isSafeInteger(c.media.timeoutMs) || c.media.timeoutMs < 1000 || c.media.timeoutMs > 120000) throw new BridgeError('media-config');
+  const cdn = new URL(c.media.baseUrl);
+  if (cdn.protocol !== 'https:' || cdn.port || cdn.username || cdn.password || cdn.hash || cdn.search || !c.media.allowedHosts.includes(cdn.hostname)) throw new BridgeError('media-config');
   return c;
 }
