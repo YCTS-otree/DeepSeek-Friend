@@ -11,7 +11,7 @@ import { apply } from '../dsh/weixin-policy.js';
 
 test('complete MOCK workflow: iLink HTTP polls → DSH RPC/WS → durable reply outbox → iLink send', { timeout: 10_000 }, async t => {
   const f = fixture(t); const replies = []; const sessions = new Map(); const followed = new Map(); let poll = 0;
-  const requestIds = []; const sessionIds = [];
+  const requestIds = []; const sessionIds = []; const prompts = [];
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     if (req.url === '/?token=fake') { res.writeHead(302, { 'set-cookie': 'dsh-auth-test=FAKE; HttpOnly' }); res.end(); return; }
@@ -26,7 +26,7 @@ test('complete MOCK workflow: iLink HTTP polls → DSH RPC/WS → durable reply 
     const args = body.payload.args.request;
     if (body.method === 'session/create') { if (!sessions.has(args.sessionId)) sessions.set(args.sessionId, []); value = { sessionId: args.sessionId }; }
     if (body.method === 'session/prompt') {
-      requestIds.push(args.requestId); sessionIds.push(args.sessionId);
+      requestIds.push(args.requestId); sessionIds.push(args.sessionId); prompts.push(args.content[0].text);
       const records = sessions.get(args.sessionId); const frames = turn(args.requestId, 'reply-' + requestIds.length, requestIds.length, records.length);
       records.push(...frames);
       const follow = followed.get(args.sessionId);
@@ -55,6 +55,7 @@ test('complete MOCK workflow: iLink HTTP polls → DSH RPC/WS → durable reply 
     const deadline = Date.now() + 7000;
     while (replies.length < 3 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(replies.length, 3); assert.equal(new Set(requestIds).size, 3); assert.equal(new Set(sessionIds).size, 1);
+    assert.deepEqual(prompts, ['first', 'second', 'third'].map(text => '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\n' + text));
     assert.deepEqual(replies.map(r => r.item_list[0].text_item.text), ['reply-1', 'reply-2', 'reply-3']);
     assert.ok(replies.every(r => r.context_token === 'fake-context' && r.to_user_id === 'alice'));
   } finally {

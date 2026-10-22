@@ -30,7 +30,8 @@ test('MVP workflow creates a real Agent prompt, collects text only, then replies
   const f = fixture(t); f.ingest(incoming('你好', 'a')); const job = f.job('a'); await f.engine.submit(job);
   const prompt = f.dsh.calls.find(c => c.endpoint === 'session/prompt');
   assert.equal(prompt.args.mode, 'queue'); assert.equal(prompt.args.requestId, job.request_id);
-  assert.equal(prompt.args.content[0].text, '你好');
+  assert.equal(prompt.args.content[0].text, '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\n你好');
+  assert.equal(JSON.parse(f.store.job(job.id).payload).text, '你好');
   const current = f.store.job(job.id);
   for (const e of turn(job.request_id)) await f.engine.onSession(current.session, e);
   assert.equal(f.store.job(job.id).state, 'done');
@@ -49,7 +50,10 @@ test('three related messages reuse one session; another user has an isolated ide
   }
   const ids = f.dsh.calls.filter(c => c.endpoint === 'session/prompt').map(c => c.args.sessionId);
   assert.equal(new Set(ids).size, 1);
+  assert.deepEqual(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').map(c => c.args.content[0].text),
+    [1, 2, 3].map(i => '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\ncontext ' + i));
   f.ingest(incoming('bob', 'b', 'bob')); await f.engine.submit(f.job('b'));
+  assert.equal(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').at(-1).args.content[0].text, 'bob');
   assert.notEqual(f.store.mapping('bot-test', 'alice').session, f.store.mapping('bot-test', 'bob').session);
 });
 test('new messages queue during inference and resume after completion', async t => {
@@ -68,6 +72,36 @@ test('DSH network timeout retries with exactly the same request and session iden
   await f.engine.submit(f.store.job(job.id));
   const prompts = f.dsh.calls.filter(c => c.endpoint === 'session/prompt');
   assert.equal(prompts[0].args.requestId, prompts[1].args.requestId); assert.equal(prompts[0].args.sessionId, prompts[1].args.sessionId);
+  assert.deepEqual(prompts[0].args.content, prompts[1].args.content);
+});
+test('owner identity is persisted before RPC and stays pinned across reopen and stale-object retries', async t => {
+  const f = fixture(t); const original = '第一行\n第二行：我是谁？'; f.ingest(incoming(original, 'identity'));
+  const job = f.job('identity'); const rpc = f.dsh.rpc.bind(f.dsh);
+  f.dsh.rpc = async (endpoint, args) => {
+    const result = await rpc(endpoint, args);
+    if (endpoint === 'session/prompt') {
+      assert.equal(JSON.parse(f.store.job(job.id).payload).dshText, args.content[0].text);
+      throw new BridgeError('dsh-network', '', { retryable: true, ambiguous: true });
+    }
+    return result;
+  };
+  await f.engine.submit(job);
+  const reopened = new Store(f.file);
+  try {
+    assert.equal(JSON.parse(reopened.job(job.id).payload).dshText,
+      '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\n' + original);
+  } finally { reopened.close(); }
+  f.engine.account = { ...account, ownerId: 'bob' };
+  await f.engine.submit(job); // Deliberately stale job object; the pinned DB body wins.
+  const prompts = f.dsh.calls.filter(c => c.endpoint === 'session/prompt');
+  assert.deepEqual(prompts[0].args, prompts[1].args);
+  assert.equal(JSON.parse(f.store.job(job.id).payload).text, original);
+});
+test('legacy in-flight admission retries keep the original text instead of changing an existing request body', async t => {
+  const f = fixture(t); f.ingest(incoming('升级前已提交', 'legacy'));
+  f.store.db.prepare("UPDATE jobs SET state='submitting',attempts=1 WHERE message_id=?").run('legacy');
+  await f.engine.submit(f.job('legacy'));
+  assert.equal(f.dsh.calls.find(c => c.endpoint === 'session/prompt').args.content[0].text, '升级前已提交');
 });
 test('unknown send outcome is quarantined; crash recovery preserves the original client_id', async t => {
   const f = fixture(t); f.ingest(incoming('a', 'a')); const job = f.job('a'); f.store.reply(job, 'answer', 'test');

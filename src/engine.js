@@ -117,14 +117,28 @@ export class Engine {
   async submit(job) {
     const mapping = this.store.ensureMapping(job.account, job.user);
     const session = mapping.session;
-    this.store.db.prepare("UPDATE jobs SET session=?,state='submitting',attempts=attempts+1,updated=? WHERE id=?").run(session, Date.now(), job.id);
+    const text = this.store.tx(() => {
+      const saved = this.store.job(job.id); const payload = JSON.parse(saved.payload);
+      if (typeof payload.dshText !== 'string') {
+        // Only the QR-authorized owner is OTREE. A display name grants no capabilities.
+        // Already-attempted legacy jobs must retain their original body for admission retries.
+        const owner = saved.account === this.account.accountId && saved.user === this.account.ownerId;
+        payload.dshText = saved.attempts === 0 && owner
+          ? '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\n' + payload.text
+          : payload.text;
+      }
+      // Pin the exact submitted text before any RPC; retries and restarts reuse the same body.
+      this.store.db.prepare("UPDATE jobs SET payload=?,session=?,state='submitting',attempts=attempts+1,updated=? WHERE id=?")
+        .run(JSON.stringify(payload), session, Date.now(), job.id);
+      return payload.dshText;
+    });
     try {
       const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(JSON.stringify([job.account, job.user])).digest('hex').slice(0, 32));
       fs.mkdirSync(cwd, { recursive: true });
       await this.dsh.rpc('session/create', { sessionId: session, cwd, agentPreset: this.config.dsh.agentPreset }, this.signal);
       this.dsh.follow(session);
       await this.dsh.rpc('session/prompt', { sessionId: session, requestId: job.request_id, mode: 'queue',
-        content: [{ type: 'text', text: JSON.parse(job.payload).text }], clientTimeZone: 'Asia/Shanghai' }, this.signal);
+        content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' }, this.signal);
       // A very fast Agent may have already completed while the RPC acknowledgement travelled.
       if (this.store.job(job.id).state === 'submitting') this.store.updateJob(job.id, 'waiting');
     } catch (e) {

@@ -1,6 +1,6 @@
 # Python 本地 Web 启动器
 
-版本 1.1.0；Python 3.10+，标准库 HTTP 服务，不增加 Python 依赖或虚拟环境。
+版本 1.1.1；Python 3.10+，标准库 HTTP 服务，不增加 Python 依赖或虚拟环境。
 
 ## 使用
 

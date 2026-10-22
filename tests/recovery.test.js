@@ -73,7 +73,8 @@ test('changing the active Weixin account cannot execute an old account queue or 
   await f.engine.tick(); await f.engine.drain();
   assert.equal(f.job('old').state, 'queued');
   assert.equal(f.dsh.calls.filter(c => c.endpoint === 'session/prompt').length, 1);
-  assert.equal(f.dsh.calls.find(c => c.endpoint === 'session/prompt').args.content[0].text, 'current');
+  assert.equal(f.dsh.calls.find(c => c.endpoint === 'session/prompt').args.content[0].text,
+    '【微信发送者身份】\n当前与你对话的人是 OTREE。\n\n【用户消息】\ncurrent');
 });
 test('reset releases the old follow subscription', async t => {
   const f = fixture(t); f.ingest(incoming('hello', 'hi')); await f.engine.submit(f.job('hi'));
