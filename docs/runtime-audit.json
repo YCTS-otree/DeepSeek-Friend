@@ -1,0 +1,16 @@
+{
+  "auditedAt": "2026-10-22",
+  "exitCode": 0,
+  "counts": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "overrides": {
+    "@modelcontextprotocol/client": "2.3.0",
+    "fflate": "0.8.3"
+  }
+}

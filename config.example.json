@@ -1,0 +1,27 @@
+{
+  "dataDir": "data",
+  "dsh": {
+    "baseUrl": "http://127.0.0.1:3088",
+    "agentPreset": "weixin",
+    "cwd": "data/workspaces",
+    "timeoutMs": 15000,
+    "turnTimeoutMs": 600000
+  },
+  "weixin": {
+    "enabled": true,
+    "apiBaseUrl": "https://ilinkai.weixin.qq.com",
+    "allowedHosts": ["ilinkai.weixin.qq.com"],
+    "appId": "bot",
+    "clientVersion": "2.4.10",
+    "allowedUsers": [],
+    "timeoutMs": 15000,
+    "pollTimeoutMs": 35000
+  },
+  "bridge": {
+    "maxTextChars": 16000,
+    "maxReplyChars": 2000,
+    "concurrency": 4,
+    "approvalTimeoutMs": 300000,
+    "allowApprovals": false
+  }
+}

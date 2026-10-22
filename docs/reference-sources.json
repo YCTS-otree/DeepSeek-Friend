@@ -1,0 +1,98 @@
+{
+  "reviewedAt": "2026-10-22",
+  "retrieval": "git clone over per-command http.proxy=http://127.0.0.1:10808",
+  "repositories": [
+    {
+      "repository": "Derpyu520/qq-bridge",
+      "url": "https://github.com/Derpyu520/qq-bridge",
+      "commit": "a56164e70a0521a7829138a42eee76066fde2b8b",
+      "clean": true,
+      "files": [
+        {
+          "path": "src/dsh-client.js",
+          "blob": "dd0d1c7492e8fdd4d1e45260192ee4f543be94ee"
+        },
+        {
+          "path": "src/bridge.js",
+          "blob": "40d7e2730d259d46236c34c3a276c704cf048f44"
+        },
+        {
+          "path": "plugins/qq-agent-presets/presets/qq-chat-v2.patch.yml",
+          "blob": "1bb38baf049528f10f2557a48b6a07886fc5b642"
+        },
+        {
+          "path": "plugins/qq-agent-presets/qq-tool-restrict.mjs",
+          "blob": "2dc3afb11c87038f238f2949f3af661a7f68bff2"
+        },
+        {
+          "path": "dsh/agent-presets/qq-chat/agent.cordis.yml",
+          "blob": "d3c7c88b89b169414e1a59b65ad89ae574cfe4ae"
+        },
+        {
+          "path": "src/mcp-snowluma-safe.js",
+          "blob": "d6c3b0666ac178608a5100ab86956c9a12517706"
+        },
+        {
+          "path": "scripts/verify-dsh-020-adaptation.mjs",
+          "blob": "73bff7bc3c1a57e4ede8da843286c46605a85451"
+        },
+        {
+          "path": "scripts/test-dsh-auth.mjs",
+          "blob": "622e382374e90270cf4ff2eb61f5b3b33a5af601"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "a680e5cfa7b61e649520c4930b69a189261a8a55"
+        }
+      ]
+    },
+    {
+      "repository": "Tencent/openclaw-weixin",
+      "url": "https://github.com/Tencent/openclaw-weixin",
+      "commit": "874637a0dbc24050f72d1385add4fc6170a2d726",
+      "clean": true,
+      "files": [
+        {
+          "path": "src/api/api.ts",
+          "blob": "5febfeaa45e1aa5e7c93ae9f00ea876f03c7995e"
+        },
+        {
+          "path": "src/api/types.ts",
+          "blob": "276e845eea75d0e7f48e3a5d418f93636628481b"
+        },
+        {
+          "path": "src/auth/login-qr.ts",
+          "blob": "002d8afb08e6db2039c34bd75c36dc4a2a6bd707"
+        },
+        {
+          "path": "src/monitor/monitor.ts",
+          "blob": "d60f6514fdd1e6dab4e865ffe466a7245a1492db"
+        },
+        {
+          "path": "src/messaging/send.ts",
+          "blob": "0aaea1b2d9751d6b99772f1049de6b366d29f38e"
+        },
+        {
+          "path": "src/channel.ts",
+          "blob": "ad3887e769f5eaff1119d977ca40540fa52a5b6a"
+        },
+        {
+          "path": "src/messaging/process-message.ts",
+          "blob": "9e4f4f8ede22d33b8afb14c50fb6c5346838108a"
+        },
+        {
+          "path": "docs/protocol_zh_CN.md",
+          "blob": "59e5001dcced54052355580223362bfe94922000"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "b963c3cd222ccbd6e93e4f10a5062e38096e2ce9"
+        },
+        {
+          "path": "package.json",
+          "blob": "343cb9ed876b5d6ced0f963e889c25f897d25ace"
+        }
+      ]
+    }
+  ]
+}

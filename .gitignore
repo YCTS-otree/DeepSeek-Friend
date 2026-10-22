@@ -1,0 +1,11 @@
+node_modules/
+.research/
+data/
+config.json
+.env
+*.log
+coverage/
+*.pem
+*.key
+Release/
+.runtime/
