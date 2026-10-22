@@ -73,6 +73,10 @@ async function main() {
   });
 }
 main().catch(e => {
-  if (['deepseek-key-file-missing', 'deepseek-key-file-invalid'].includes(e.code)) log('dsh.failed', { code: e.code });
+  const known = ['dsh-not-installed', 'dsh-version-mismatch', 'npm-cli-not-found', 'dsh-install-failed', 'runtime-path-invalid'];
+  const prefix = typeof e.message === 'string' ? e.message.split(';')[0] : '';
+  const code = typeof e.code === 'string' && /^[a-z0-9_/-]{1,80}$/i.test(e.code) ? e.code : known.includes(prefix) ? prefix : 'startup-failed';
+  log('dsh.failed', { code });
+  if (code === 'data-acl-access-denied' || code === 'data-directory-access') console.error('独立 DSH 运行目录权限不足，请由原目录所有者修复当前 Windows 用户的访问权。');
   console.error('独立 DSH 启动/安装失败。检查 API Key 文件、.runtime 安装版本、3088 端口以及 docs/operations.md。'); process.exitCode = 1;
 });

@@ -74,3 +74,7 @@
 ### v1.0.1 补充验证
 
 用户随后明确提供并确认 `DEEPSEEK_FRIEND.key` 是 DeepSeek API Key。启动器支持从该确定路径在内存中读取，传入独立 DSH 子进程环境；没有打印内容或读取签名私钥。已通过独立 DSH 的 session/create、follow、session/prompt 发起真实最小模型验证，收到 completed 和精确预期文本。模型凭证接入及基础推理验证现已通过，微信扫码/投递与模型触发交互仍待实际验收。
+
+### v1.0.2 Windows 用户身份回归
+
+用户普通终端启动报告 data-acl。实测确认此前运行目录属于 CodexSandboxOnline，ACL 没有项目所有者 Administrator 的显式用户授权；Administrator 在过滤后的令牌下不能依靠管理员组取得访问。已用实际用户身份重现旧版失败。修复为数值 SID、保留所有者/项目所有者的精确授权，并在已合规时避免重写 DACL；没有放开 Everyone、Users 或 Authenticated Users。随后在 Administrator 身份下通过 DSH 启动、doctor 与真实 iLink QR 获取，未完成手机扫码或投递。此问题说明前期仅在测试账号下通过不足以证明用户终端可运行，新增对应回归验证。

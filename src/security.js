@@ -1,14 +1,65 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { BridgeError } from './util.js';
 
 export function secureDirectory(dir) {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); }
+  catch { throw new BridgeError('data-directory-access', '无法访问运行目录，请检查目录所有者及权限'); }
   if (process.platform !== 'win32') { fs.chmodSync(dir, 0o700); return; }
-  const r = spawnSync('icacls.exe', [dir, '/inheritance:r', '/grant:r', `${os.userInfo().username}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'], { windowsHide: true, encoding: 'utf8' });
-  if (r.status !== 0) throw new BridgeError('data-acl', '无法限制 data 目录 ACL，拒绝保存凭证');
+  // Numeric SIDs avoid local/domain name ambiguity. Preserve the directory owner and,
+  // for project-local state, the project owner (an unelevated admin's group SID is deny-only).
+  const code = `
+$ErrorActionPreference='Stop'
+try {
+  $p=ConvertFrom-Json ([Console]::In.ReadToEnd())
+  $current=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  $allowed=New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach($sid in @($current,'S-1-5-18','S-1-5-32-544')){[void]$allowed.Add($sid)}
+  $acl=[IO.Directory]::GetAccessControl($p.dir)
+  $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+  if($owner -match '^S-1-5-21-(\\d+-){3}\\d+$'){[void]$allowed.Add($owner)}
+  $root=[IO.Path]::GetFullPath($p.root).TrimEnd([char]'\\',[char]'/')
+  $full=[IO.Path]::GetFullPath($p.dir)
+  if($full.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
+    $projectOwner=([IO.Directory]::GetAccessControl($root)).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($projectOwner -match '^S-1-5-21-(\\d+-){3}\\d+$'){[void]$allowed.Add($projectOwner)}
+  }
+  function Test-PrivateAcl($candidate) {
+    if(-not $candidate.AreAccessRulesProtected){return $false}
+    $covered=New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach($rule in $candidate.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
+      if($rule.AccessControlType -ne 'Allow' -or -not $allowed.Contains($rule.IdentityReference.Value)){return $false}
+      if(($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl -and
+         ($rule.InheritanceFlags -band 3) -eq 3 -and $rule.PropagationFlags -eq 'None'){[void]$covered.Add($rule.IdentityReference.Value)}
+    }
+    foreach($sid in $allowed){if(-not $covered.Contains($sid)){return $false}}
+    return $true
+  }
+  if(-not (Test-PrivateAcl $acl)){
+    $acl.SetAccessRuleProtection($true,$false)
+    foreach($rule in @($acl.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier]))){[void]$acl.RemoveAccessRuleSpecific($rule)}
+    foreach($sid in $allowed){
+      $identity=New-Object Security.Principal.SecurityIdentifier($sid)
+      $rule=New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+      [void]$acl.AddAccessRule($rule)
+    }
+    [IO.Directory]::SetAccessControl($p.dir,$acl)
+    if(-not (Test-PrivateAcl ([IO.Directory]::GetAccessControl($p.dir)))){[Console]::Write('acl-verify');exit 1}
+  }
+  [Console]::Write('ok')
+} catch [UnauthorizedAccessException] {[Console]::Write('acl-access-denied');exit 1}
+catch [Security.SecurityException] {[Console]::Write('acl-access-denied');exit 1}
+catch {[Console]::Write('acl-tool-failed');exit 1}
+`;
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', code], {
+    input: JSON.stringify({ dir: path.resolve(dir), root: fileURLToPath(new URL('..', import.meta.url)) }), windowsHide: true, encoding: 'utf8', timeout: 15_000,
+  });
+  if (r.status !== 0 || r.stdout.trim() !== 'ok') {
+    const detail = ['acl-access-denied', 'acl-verify', 'acl-tool-failed'].includes(r.stdout?.trim()) ? r.stdout.trim() : 'acl-tool-failed';
+    throw new BridgeError('data-' + detail, '无法验证运行目录的私有 ACL，请由原目录所有者修复权限');
+  }
 }
 function dpapi(value, decrypt) {
   const op = decrypt ? 'Unprotect' : 'Protect';

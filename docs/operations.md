@@ -8,6 +8,8 @@
 
 Windows DPAPI 与当前 Windows 用户绑定。请使用同一用户运行 DSH、Bridge 和登录命令；不同用户不能解密彼此凭证。重新启动项目 DSH 会重新保存该用户可用的 DSH Cookie。微信凭证跨用户迁移时需要重新扫码，不要复制工作 DSH 的密钥。
 
+Windows 运行目录 ACL 使用当前用户及所有者的数值 SID。对项目内目录显式保留项目所有者权限，避免开发/测试账号创建目录后，项目所有者在普通 PowerShell 中因管理员组被 UAC 过滤而失去访问权。已符合私有 ACL 要求时直接通过，不在每次启动强制修改 DACL；仍拒绝 Everyone、Users、Authenticated Users 的宽泛授权。v1.0.2 已修复本项目既有 data 与独立 home 的此类问题，并在实际 Administrator 账号下验证。
+
 独立启动器从项目根目录 `DEEPSEEK_FRIEND.key` 或显式 `DEEPSEEK_FRIEND_KEY_FILE` 读取已确认的 DeepSeek API Key，只传入 DSH 子进程环境。替换 API Key 文件后需重启独立 DSH。不会扫描其他凭证文件或打印 Key；签名私钥禁止用于此入口。默认文件不存在时仍可在独立 DSH 页面配置模型。该 API Key 文件本身应由操作者限制权限。
 
 ## 常见错误
@@ -25,7 +27,9 @@ Windows DPAPI 与当前 Windows 用户绑定。请使用同一用户运行 DSH�
 | `ilink-auth-expired` | 通道请求已停止；执行 `npm run login` 重新授权 |
 | `ilink-host-rejected` | 查看腾讯返回的实际 IDC 主机；由操作者核验后加入 `weixin.allowedHosts`；不要开放任意域名 |
 | `pending-stale-or-foreign` | 编号已过期、其他用户、会话重置或连接变化；使用当前仍有效的新提示 |
-| `data-acl` / `credential-protection` | 检查 Windows 用户/DPAPI/ACL；程序拒绝退回不受保护的凭证文件 |
+| `data-directory-access` / `data-acl-access-denied` | 目录访问或 ACL 权限不足，应由原目录所有者修复当前用户权限；不要开放 Everyone |
+| `data-acl-tool-failed` / `data-acl-verify` | Windows PowerShell/ACL 检查失败；程序拒绝退回不受保护目录 |
+| `credential-protection` | 检查 Windows 用户/DPAPI；先以同一用户启动 DSH 刷新连接 Cookie，微信授权仍需原用户或重新扫码 |
 | `instance-running` / `account-running` | 停止已有实例；不要通过复制凭证绕过锁 |
 
 DSH 包装启动器对未经脱敏的原始日志采用不透传策略，避免上游诊断意外泄密。如果 `dsh.exited` 无法定位，应由本机操作者在自己的交互终端以同一 `.runtime/home`、profile 和 `.runtime/weixin-resolved.patch.yml` 运行 DSH 官方 CLI 查看诊断；不要把原始诊断或启动 URL 贴到公共日志。先确认端口空闲、profile 已创建、包版本正确。**Bridge 的 doctor 只能验证鉴权/Preset，不能证明模型已登录。**

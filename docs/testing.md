@@ -1,19 +1,20 @@
 # 测试与验收报告
 
-日期：2026-10-22；Bridge 1.0.1；Windows；Node 24.19.0；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。
+日期：2026-10-22；Bridge 1.0.2；Windows；Node 24.19.0；独立 DSH 0.2.0-rc.2（含兼容性文档中记录的安全依赖覆盖）。
 
 ## 已执行结果
 
 | 检查 | 结果与范围 |
 | --- | --- |
 | `npm run check` | src、scripts、tests、DSH 策略模块的 JavaScript 语法检查通过 |
-| `RUN_DSH_PROTOCOL=1 npm test` | 45 项通过，0 失败、0 跳过；其中 44 项为本机自动化/Mock、1 项连接真实独立 DSH |
+| `RUN_DSH_PROTOCOL=1 npm test` | 47 项通过，0 失败、0 跳过；其中 46 项为本机自动化/Mock、1 项连接真实独立 DSH；本次以实际 Administrator 账号运行 |
 | 默认 `npm test` | 同一套测试，真实 DSH 用例在未显式启用时跳过，不伪报成功 |
 | Bridge `npm audit --omit=dev` | 0 个已知漏洞 |
 | 独立 runtime `npm audit --prefix .runtime` | 修复依赖锁定后为 0 个已知漏洞；初始为 5 high / 7 moderate（包括向上归因），修复记录见 compatibility.md |
 | DSH 锁文件 `npm ci --prefix .runtime --dry-run` | 已验证锁文件可被 npm 接受；实际独立安装并成功启动 |
 | 独立启动器首次启动 / 再启动 | 均已执行；只在首次初始化 profile；真实持久空 Session 在重启后复用 |
 | 真实 DSH + DeepSeek 模型最小验证 | 用户确认 API Key 类型后，由启动器在内存加载；通过 DSH Session 提交测试输入，收到 completed 与预期文本。独立验证，不计入默认自动化数量，不输出凭证或推理 |
+| 实际用户跨账号启动回归 | 在 Administrator 账号重现旧版 data-acl；修复后验证 data/home 可写、独立 DSH ready、DPAPI 连接恢复、doctor 和 Bridge 获取真实 iLink 二维码通过。二维码内容未进入测试输出；未手机扫码 |
 | 参考源码 | 两个真实 Git clone，经本机 10808 代理；提交及 blob SHA 见 reference-sources.json；上游工作区无修改 |
 
 ## 自动化覆盖
@@ -28,6 +29,7 @@
 - **权限与交互**：默认 DSH restrict/guard 阻止 Shell/写入/MCP；不同用户不能批准；必须有在线 client、原调用及唯一 audit ID；重复审计歧义拒绝；完整操作提示未确认投递不允许批准；断线令 pending 失效；澄清答案结构校验；等待回答时普通消息保留队列；取消先清 inbox。
 - **平台保护**：Windows 账号命名管道锁和 data SQLite 锁；DPAPI 假凭证往返，磁盘无假凭证的明文；日志忽略任意敏感字段；启动配置拒绝工作 DSH 3080。
 - **API Key 入口**：默认与自定义文件、BOM/换行、原始环境不被修改、显式缺失和格式/大小不合法拒绝；自动化仅使用假凭证，真实凭证不进入测试代码或输出。
+- **Windows ACL 回归**：数值 SID、显式项目所有者权限、重复检查、禁止宽泛用户组、文件写入，以及拒绝访问错误码和原始 stderr 不泄漏；真实用户普通权限下的启动另有上表实测。
 
 ## 真实 DSH 协议测试的边界
 

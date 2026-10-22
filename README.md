@@ -1,6 +1,6 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.0.1**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
+版本 **1.0.2**。通过腾讯官方 iLink 长轮询接收个人微信文本，将消息作为真实用户输入提交给 DeepSeek Harness，再将 Agent 的文本结果回复到入站会话。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
 
@@ -129,7 +129,7 @@ node src/main.js outbox retry <输出中的id>
 
 ## 安全与数据
 
-Windows 凭证使用当前用户 DPAPI；data 与独立 DSH home 限制 ACL，仅当前用户、SYSTEM 和本机管理员可访问。Linux 凭证采用私有文件（0600）与私有目录（0700），不宣称磁盘加密。SQLite 保存用户文本和会话 context token，依赖目录权限，不是加密数据库。使用同一 Windows 用户启动相关命令；跨用户迁移需重新授权。
+Windows 凭证使用当前用户 DPAPI；data 与独立 DSH home 限制 ACL，仅当前用户、目录所有者、项目所有者（项目内运行目录）、SYSTEM 和本机管理员可访问。权限使用数值 SID，已符合要求时只检查，不要求普通终端重复修改 ACL。Linux 凭证采用私有文件（0600）与私有目录（0700），不宣称磁盘加密。SQLite 保存用户文本和会话 context token，依赖目录权限，不是加密数据库。使用同一 Windows 用户启动相关命令；跨用户迁移需重新授权。请先在一个终端启动 DSH，等待 ready，再在第二个终端启动 Bridge。
 
 日志只包含操作状态、内部任务 ID、错误码，不记录消息正文、Cookie、bot_token 或完整远程错误堆栈。DSH 原生诊断可能包含敏感配置，包装启动器不透传原始输出。启动失败的诊断方式见运维文档。
 
@@ -150,7 +150,7 @@ Remove-Item Env:RUN_DSH_PROTOCOL
 
 **真实微信 A–E 场景仍需扫码账号验收。** 已用用户提供的 API Key 通过独立 DSH Session 完成一次真实模型响应验证；这不等于微信端到端通过。完整结果见 [测试报告](docs/testing.md)；接口与兼容边界见 [调研记录](docs/research.md) 和 [兼容性](docs/compatibility.md)。
 
-生成发布源代码包：`npm run release`，输出 `Release/v1.0.1/`，已存在的版本目录拒绝覆盖。
+生成发布源代码包：`npm run release`，输出 `Release/v1.0.2/`，已存在的版本目录拒绝覆盖。
 
 ## 限制与扩展
 

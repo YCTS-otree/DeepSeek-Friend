@@ -90,11 +90,18 @@ async function main() {
 main().catch(e => {
   if (!controller.signal.aborted || e.name !== 'AbortError') {
     const messages = {
-      'dsh-auth-required': '请先运行 npm run dsh:start，再设置独立实例的 DSH_LAUNCH_TOKEN。',
-      'dsh-auth-rejected': '独立 DSH 凭证失效，请更新 DSH_LAUNCH_TOKEN 或 DSH_COOKIE。',
+      'dsh-auth-required': '请先在另一个终端运行 npm run dsh:start，等待 dsh.independent-ready，再运行 npm start。',
+      'dsh-auth-rejected': '独立 DSH 连接凭证失效。请先重启 npm run dsh:start，再重启 Bridge；显式环境凭证也需检查。',
+      'dsh-network': '无法连接独立 DSH。请先在另一个终端运行 npm run dsh:start，等待 dsh.independent-ready，再启动 Bridge。',
+      'dsh-unavailable': '独立 DSH 尚未就绪。请先启动独立 DSH 并等待 dsh.independent-ready。',
       'ilink-auth-expired': '微信授权失效，轮询已停止。请运行 npm run login。',
       'instance-running': '该 data 目录已有实例运行；本地维护命令请先停止 Bridge。',
       'account-running': '该微信账号已被另一个 Bridge 实例占用。',
+      'data-directory-access': '无法访问运行目录，请检查该目录的所有者及当前 Windows 用户权限。',
+      'data-acl-access-denied': '运行目录 ACL 拒绝访问。请由原目录所有者恢复当前 Windows 用户的权限；不需要放开 Everyone 权限。',
+      'data-acl-verify': '运行目录权限校验失败，已停止以保护凭证。',
+      'data-acl-tool-failed': 'Windows ACL 检查失败，请确认 Windows PowerShell 可用。',
+      'credential-protection': '当前 Windows 用户无法解密原用户的凭证。请先运行 npm run dsh:start 刷新独立 DSH 连接；微信凭证需要使用原用户或重新扫码。',
     };
     log('bridge.failed', { code: e.code ?? 'internal' });
     console.error(messages[e.code] ?? '启动或运行失败，请按错误码查阅 docs/operations.md。'); process.exitCode = 1;
