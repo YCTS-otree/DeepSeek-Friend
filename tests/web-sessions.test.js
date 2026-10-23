@@ -23,6 +23,26 @@ test('group management shows escaped names, persists only the selected switch an
  await row.children[1].listeners.click();assert.equal(enabled,true);assert.ok(requests.some(r=>r.action==='qq-group-configure'&&r.args.groupId==='1131809600'));assert.equal(p.get('qq-groups-list').children[0].children[1].textContent,'停用');
  p.respond(()=>({connected:false,groups:[{id:'1131809600',name:'缓存群',members:4,enabled:true}]}));await p.run('loadQQGroups()');assert.equal(p.get('qq-groups-list').children[0].children[1].disabled,true);assert.match(p.get('qq-groups-notice').textContent,/未连接/);
 });
+
+test('each restore confirmation restarts its own 3-second disabled period; early clicks send nothing',async()=>{
+ const p=page(),calls=[];let step=1;
+ p.respond(body=>{calls.push(body);if(body.action==='restore-confirm')return{step:++step,id:'plan',nonce:'nonce'+step,name:'fixture.DSF',waitMs:3000};return{};});
+ p.run('showArchivePlan({step:1,id:"plan",nonce:"nonce1",name:"fixture.DSF",waitMs:3000})');
+ for(const expected of [1,2]){
+   assert.equal(p.get('archive-confirm').disabled,true);await p.get('archive-confirm').listeners.click();assert.equal(calls.length,expected-1);
+   p.run('archiveReadyAt=Date.now()-1;archiveCountdown()');assert.equal(p.get('archive-confirm').disabled,false);
+   await p.get('archive-confirm').listeners.click();assert.equal(p.run('archivePlan.step'),expected+1);assert.equal(p.get('archive-confirm').disabled,true);
+ }
+ assert.match(p.get('archive-confirm-warning').textContent,/保存.*当前状态/);
+ p.respond(body=>body.action==='restore-cancel'?{cancelled:true}:{});await p.get('archive-cancel').listeners.click();assert.equal(p.get('archive-confirmation').hidden,true);assert.equal(p.run('archivePlan'),null);
+});
+
+test('feature settings await the completed checkpoint operation and propagate snapshot failure',async()=>{
+ const p=page();p.respond(body=>body.action==='qq-group-configure'?{archiveOperation:'op'}:{state:'done',progress:'已完成',result:{archive:'before.DSF',value:{enabled:true}}});
+ assert.equal((await p.run('sessionRequest("qq-group-configure",{enabled:true,groupId:"1131809600"})')).enabled,true);
+ p.respond(body=>body.action==='qq-group-configure'?{archiveOperation:'failed'}:{state:'failed',progress:'已停止',error:'dsf-operation-failed'});
+ await assert.rejects(p.run('sessionRequest("qq-group-configure",{enabled:true,groupId:"1131809600"})'),/dsf-operation-failed/);
+});
 test('selecting an empty archived session clears the previous session transcript immediately', async () => {
   const p = page(); p.run('selectSession("a"); historyEntries = [{n:1,role:"assistant",actor:{},text:"private to A",created:1}]; renderHistory();');
   assert.equal(p.get('chat-history').children.length, 1);

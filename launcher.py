@@ -21,6 +21,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
+from scripts.archive_manager import ArchiveManager, ArchiveError
 
 ROOT = Path(__file__).resolve().parent
 VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
@@ -55,6 +56,7 @@ class Controller:
         self.svg = None
         self.qq_svg = None
         self.state.update(qqGateway="stopped", qqLogin="idle", qqQrRevision=0, qqHasQr=False, qqAccount=None, qqError=None, qqErrorDetail="")
+        self.archives = ArchiveManager(self)
         self.worker = threading.Thread(target=self._work, daemon=True)
         self.worker.start()
 
@@ -82,6 +84,8 @@ class Controller:
         with self.lock:
             if self.closed:
                 raise LauncherError("launcher-closed")
+            if any(op['state'] in ('queued', 'running') for op in self.archives.operations.values()):
+                raise LauncherError('dsf-maintenance-busy')
             if action == "stop":
                 self.cancel.set()
             elif self.state["busy"]:
@@ -97,7 +101,9 @@ class Controller:
             if action is None:
                 return
             try:
-                if action == "qq-start":
+                if isinstance(action, tuple) and action[0] == 'archive':
+                    self.archives.run(action[1])
+                elif action == "qq-start":
                     self._start_qq()
                 elif action == "qq-stop":
                     (self.root / ".runtime/qq-gateway/autostart.flag").unlink(missing_ok=True)
@@ -242,7 +248,7 @@ class Controller:
                 self._clear_login()
         self._log(event, data.get("code"))
 
-    def _start(self, relogin=False):
+    def _start(self, relogin=False, bridge=True, qq=True):
         with self.lock:
             self.state["error"] = None
         if not self._alive("dsh"):
@@ -276,12 +282,12 @@ class Controller:
             return
         if relogin:
             self._stop_child("bridge")
-        if not self._alive("bridge"):
+        if bridge and not self._alive("bridge"):
             with self.lock:
                 self._clear_login()
             self._spawn("bridge", ["src/main.js", "login" if relogin else "start"], "login" if relogin else "start")
 
-        if self.auto_qq and (self.root / ".runtime/qq-gateway/4.18.41/node.exe").exists():
+        if qq and self.auto_qq and (self.root / ".runtime/qq-gateway/4.18.41/node.exe").exists():
             self._start_qq()
 
     def _send(self, name, data):
@@ -307,15 +313,19 @@ class Controller:
 
     def sessions(self, action, args=None):
         with self.session_commands_lock:
+            if isinstance(args, dict):
+                checkpoint = self.archives.feature(action, args)
+                if checkpoint:
+                    return checkpoint
             return self._sessions(action, args)
 
-    def _sessions(self, action, args=None):
+    def _sessions(self, action, args=None, maintenance=False):
         if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive", "room-info", "runtime-status", "runtime-configure", "runtime-stop", "runtime-wake", "thoughts", "prompts", "alarms", "alarm-create", "alarm-cancel", "test-send", "test-clear", "contacts-list", "contacts-edit", "channels-status", "qq-configure", "qq-groups-list", "qq-group-configure", "internet-configure", "internet-preview", "archive-list"} or (args is not None and not isinstance(args, dict)):
             raise LauncherError("session-action-invalid")
         request_id = str(uuid.uuid4())
         pending = queue.Queue(maxsize=1)
         with self.lock:
-            if self.closed or self.state["busy"]:
+            if self.closed or self.state["busy"] and not maintenance:
                 raise LauncherError("launcher-busy")
             alive = self._alive("bridge")
             if alive:
@@ -398,6 +408,7 @@ class Controller:
 
     def close(self):
         with self.lock:
+            archive_running = any(op['state'] == 'running' for op in self.archives.operations.values())
             self.closed = True
             self.cancel.set()
             # Cancel queued starts so shutdown cannot revive an owned process.
@@ -408,7 +419,8 @@ class Controller:
                     break
             self.commands.put("stop")
             self.commands.put(None)
-        self.worker.join(timeout=40)
+        # Never terminate an in-progress multi-component restore during normal shutdown.
+        self.worker.join(timeout=None if archive_running else 40)
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -479,6 +491,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(303, headers={"Location": "/", "Set-Cookie": "ds_friend=" + self.server.session + "; HttpOnly; SameSite=Strict; Path=/"})
         if not self._authenticated():
             return self._reply(403, "请使用启动器自动打开的浏览器窗口；关闭启动器后重新运行可重新打开。", "text/plain; charset=utf-8")
+        if target.path == '/api/archive-download':
+            try:
+                file = self.server.controller.archives.path(parse_qs(target.query).get('name', [''])[0])
+                with file.open('rb') as stream:
+                    self.send_response(200)
+                    for name, value in {'Content-Type':'application/octet-stream', 'Content-Length':str(file.stat().st_size), 'Content-Disposition':'attachment; filename="' + file.name + '"', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff'}.items():
+                        self.send_header(name, value)
+                    self.end_headers()
+                    shutil.copyfileobj(stream, self.wfile, 1024 * 1024)
+            except (ArchiveError, ValueError):
+                self._reply(404, {'error':'dsf-not-found'})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/style.css": ("style.css", "text/css; charset=utf-8")}
@@ -519,11 +545,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.controller.enqueue(data.get("action"))
             elif self.path == "/api/sessions":
                 return self._reply(200, self.server.controller.sessions(data.get("action"), data.get("args")))
+            elif self.path == '/api/archives':
+                return self._reply(200, self.server.controller.archives.command(data.get('action'), data.get('args', {})))
             elif self.path == "/api/quit":
+                if any(op['state'] in ('queued', 'running') for op in self.server.controller.archives.operations.values()):
+                    raise ArchiveError('dsf-maintenance-busy')
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
             else:
                 return self._reply(404, {"error": "not-found"})
-        except LauncherError as exc:
+        except (LauncherError, ArchiveError) as exc:
             return self._reply(409, {"error": str(exc)})
         return self._reply(202, {"ok": True})
 

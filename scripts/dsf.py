@@ -11,6 +11,8 @@ import socket
 import sqlite3
 import subprocess
 import tempfile
+import time
+import sys
 import uuid
 import zipfile
 
@@ -54,7 +56,7 @@ def offline(root, data, port):
     finally:
         lock.close()
 
-def snapshot(root=ROOT, data=None, output=None):
+def snapshot(root=ROOT, data=None, output=None, reason='manual'):
     root = Path(root).resolve(); data = Path(data).resolve() if data else settings(root)[0]
     folder = root / 'Archive'; folder.mkdir(exist_ok=True)
     check_target(root, folder)
@@ -87,7 +89,7 @@ def snapshot(root=ROOT, data=None, output=None):
                 else:
                     shutil.copyfile(file, dest)
                 entries[name] = {'bytes': dest.stat().st_size, 'sha256': digest(dest)}
-        manifest = {'format': 'DeepSeek:Friend State', 'schemaVersion': 1, 'createdAt': datetime.now(timezone.utc).isoformat(), 'appVersion': json.loads((root / 'package.json').read_text(encoding='utf-8'))['version'], 'dshVersion': '0.2.0-rc.2', 'credentialsIncluded': False, 'files': entries}
+        manifest = {'format': 'DeepSeek:Friend State', 'schemaVersion': 1, 'createdAt': datetime.now(timezone.utc).isoformat(), 'appVersion': json.loads((root / 'package.json').read_text(encoding='utf-8'))['version'], 'dshVersion': '0.2.0-rc.2', 'credentialsIncluded': False, 'reason': reason, 'files': entries}
         partial = output.with_suffix('.partial')
         try:
             with zipfile.ZipFile(partial, 'x', zipfile.ZIP_DEFLATED) as archive:
@@ -138,13 +140,16 @@ def inspect(file):
                 raise ValueError('dsf-checksum')
         return manifest
 
-def restore(file, root=ROOT, data=None):
+def restore(file, root=ROOT, data=None, expected_digest=None):
     root = Path(root).resolve(); data = Path(data).resolve() if data else settings(root)[0]
     manifest = inspect(file)
     if manifest['appVersion'] != json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']:
         raise ValueError('dsf-app-version-mismatch')
     # Always preserve today's state before replacing any component.
-    before = snapshot(root, data)
+    before = snapshot(root, data, reason='before-restore')
+    inspect(before)  # A failed current-state backup must never be followed by replacement.
+    if expected_digest is not None and digest(Path(file)) != expected_digest:
+        raise ValueError('dsf-confirmation-target-changed')
     with tempfile.TemporaryDirectory(prefix='restore-', dir=root / 'Archive') as temp:
         temp = Path(temp); stage = temp / 'stage'; saved = temp / 'saved'; stage.mkdir(); moved = []; applied = []
         with zipfile.ZipFile(file) as z:
@@ -180,6 +185,12 @@ def main():
     with offline(ROOT, data, port):
         if args.action == 'restore':
             if not args.confirm_restore: raise ValueError('dsf-confirm-restore-required')
+            if not sys.stdin.isatty(): raise ValueError('dsf-interactive-confirmation-required')
+            for step in (1, 2, 3):
+                print('回滚确认 ' + str(step) + '/3：' + str(Path(args.file).name) + '；3 秒后可确认。', flush=True)
+                time.sleep(3)
+                if input('输入“确认回滚”继续，其他输入取消：').strip() != '确认回滚':
+                    raise ValueError('dsf-restore-cancelled')
             print('Before restore: ' + str(restore(args.file, ROOT, data)))
         else: print('Archive: ' + str(snapshot(ROOT, data)))
 
