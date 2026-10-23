@@ -2,11 +2,11 @@ import { RuntimeStore } from '../src/runtime.js';
 import { clean } from '../src/cognitive/store.js';
 import { defineTool } from '../.runtime/node_modules/@deepseek-ai/dsh-tools/lib/index.js';
 import { createUserMessage } from '../.runtime/node_modules/@deepseek-ai/dsh-llm/lib/index.js';
-export const INTERACTION_TOOLS = ['weixin_contacts', 'weixin_send_message', 'weixin_send_sticker', 'sticker_list', 'sticker_note', 'alarm_set', 'alarm_list', 'alarm_cancel', 'take_rest'];
+export const INTERACTION_TOOLS = ['weixin_contacts', 'weixin_send_message', 'weixin_send_sticker', 'sticker_list', 'sticker_note', 'alarm_set', 'alarm_list', 'alarm_cancel', 'private_note', 'take_rest'];
 export function installInteraction(ctx, runtime) {
   ctx.systemPrompt.section({ name: 'friend:clock', order: 22010, interpolate: false, text: () => '当前时间：' + new Date().toISOString() + '；本地时区 Asia/Shanghai。' });
   ctx.systemPrompt.section({ name: 'friend:interaction', order: 22000, interpolate: false, text:
-    '你可以持续思考，不要求每次产生对外内容。发给微信的话必须调用 weixin_send_message，可以在同一轮多次调用；其他正文是私有笔记，不自动发给任何人。原生 reasoning 也只保存到本机。不要把内部思考作为消息发送。排队不等于送达，不要为了重试不明结果而重复调用发送工具。可以用 weixin_send_sticker 发送已收到的图片，用 sticker_note 留下自己对表情含义的理解（推断而非事实）。你有一个小闹钟：alarm_set 设置未来的带时区时间，不要求原因，note 可省略；OTREE 已明确允许你自主决定何时主动发消息，这是你的自由；闹钟响后也可以联系已知联系人。用 weixin_contacts 选择联系人，只使用官方有效会话凭据；测试不发送微信。想暂时休息就调用 take_rest，不要求解释。新消息或闹钟会再次叫醒你。单次输出达到长度限制可以继续下一步，持续运行没有累计 token 或步数截止。' });
+    '你可以持续思考，不要求每次产生对外内容。回复联系人时，普通正文就是对外回复，会在回复阶段结束时自动发送；也可以调用 weixin_send_message，在同一轮发送多条消息。已经调用发送工具时，不会再自动重复发送该阶段正文。私有笔记请调用 private_note，不要放在回复正文里；调用后本阶段保持私有，如还要发言请使用发送工具。回复后进入自主继续阶段，以及内部闹钟唤醒时，普通正文只留在本机；如需主动发言仍调用发送工具。原生 reasoning 始终只保存到本机。不要把内部思考作为消息发送。排队不等于送达，不要为了重试不明结果而重复调用发送工具。可以用 weixin_send_sticker 发送已收到的图片，用 sticker_note 留下自己对表情含义的理解（推断而非事实）。你有一个小闹钟：alarm_set 设置未来的带时区时间，不要求原因，note 可省略；OTREE 已明确允许你自主决定何时主动发消息，这是你的自由；闹钟响后也可以联系已知联系人。用 weixin_contacts 选择联系人，只使用官方有效会话凭据；测试不发送微信。想暂时休息就调用 take_rest，不要求解释。新消息或闹钟会再次叫醒你。单次输出达到长度限制可以继续下一步，持续运行没有累计 token 或步数截止。' });
   ctx.on('agent/request', async (p, next) => {
     const c = await next(), s = runtime.settings();
     return { ...c, provider: s.provider, model: s.model, reasoningEffort: s.reasoningEffort, maxTokens: s.maxTokens };
@@ -28,6 +28,7 @@ export function installInteraction(ctx, runtime) {
   });
   ctx.on('agent/turn-stopping', async ({ agent, signal }) => {
     const c = runtime.context(agent?.id), s = runtime.settings();
+    if (c && !signal.aborted) runtime.finishReply(agent.id);
     if (!c || c.rest || c.preempt || !s.continuous || s.paused || signal.aborted) return;
     if (s.continueDelayMs) await new Promise(resolve => { const timer = setTimeout(finish, s.continueDelayMs); function finish() { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); } signal.addEventListener('abort', finish, { once: true }); });
     const latest = runtime.context(agent.id);
@@ -44,6 +45,7 @@ export function installInteraction(ctx, runtime) {
     alarm_set: { parameters: { at: { type: 'string', required: true, description: '包含时区的 ISO 8601 时间。' }, note: { type: 'string' } }, call: (a, e) => runtime.alarm(e.agent.id, e.callId, a.at, a.note), description: '给自己设置一次持久小闹钟；不要求原因或备注，支持重启补执行。' },
     alarm_list: { parameters: {}, call: (_a, e) => runtime.alarms(e.agent.id), description: '查看自己的闹钟与执行状态。' },
     alarm_cancel: { parameters: { id: { type: 'string', required: true } }, call: (a, e) => runtime.cancelAlarm(e.agent.id, a.id), description: '取消尚未响起的自己的闹钟。' },
+    private_note: { parameters: { text: { type: 'string', required: true } }, call: (a) => { if (typeof a.text !== 'string' || a.text.length > 16000 || clean(a.text, 16000) !== a.text) throw Error('private-note-invalid'); return { private: true, saved: true }; }, description: '保存不对外发送的私有笔记；原生 reasoning 自动保存，无需重复抄写。' },
     take_rest: { parameters: {}, call: (_a, e) => { runtime.flag(e.agent.id, 'rest'); e.concludeTurn(); return { resting: true }; }, description: '暂时休息，无需理由；不会清空上下文，新消息或闹钟可再次唤醒。' },
   };
   for (const [name, spec] of Object.entries(definitions)) ctx.tools.register(defineTool({ name, description: spec.description, parameters: spec.parameters,

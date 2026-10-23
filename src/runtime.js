@@ -25,6 +25,9 @@ export class RuntimeStore {
     if (!this.db.prepare('PRAGMA table_info(emissions)').all().some(c => c.name === 'delivery_job')) this.db.exec('ALTER TABLE emissions ADD COLUMN delivery_job TEXT');
     if (!this.db.prepare('PRAGMA table_info(contexts)').all().some(c => c.name === 'contact')) this.db.exec('ALTER TABLE contexts ADD COLUMN contact TEXT');
     this.db.exec('CREATE TABLE IF NOT EXISTS contacts(id TEXT PRIMARY KEY,account TEXT NOT NULL,user TEXT NOT NULL,job TEXT NOT NULL,updated INTEGER NOT NULL)');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS reply_routes(job TEXT PRIMARY KEY,session TEXT NOT NULL,request TEXT NOT NULL,start_seq INTEGER,closed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS reply_candidates(job TEXT NOT NULL,seq INTEGER NOT NULL,text TEXT NOT NULL,PRIMARY KEY(job,seq));`);
+    if (!this.db.prepare('PRAGMA table_info(reply_routes)').all().some(c => c.name === 'is_private')) this.db.exec('ALTER TABLE reply_routes ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
   }
   close() { this.db.close(); }
   settings() { return { ...RUNTIME_DEFAULTS, ...Object.fromEntries(this.db.prepare('SELECT * FROM settings').all().map(r => [r.k, JSON.parse(r.v)])), ...FLASH }; }
@@ -38,8 +41,32 @@ export class RuntimeStore {
     catch (e) { this.db.exec('ROLLBACK'); throw e; }
     return this.settings();
   }
-  bind(session, job, kind = 'conversation', contact = null) {
+  bind(session, job, kind = 'conversation', contact = null, request = null) {
     this.db.prepare('INSERT INTO contexts(session,job,kind,rest,preempt,updated,contact) VALUES(?,?,?,0,0,?,?) ON CONFLICT(session) DO UPDATE SET job=excluded.job,kind=excluded.kind,rest=0,preempt=0,updated=excluded.updated,contact=COALESCE(excluded.contact,contexts.contact)').run(session, job, kind, Date.now(), contact);
+    if (request) this.prepareReply(session, request);
+  }
+  prepareReply(session, request) {
+    const c = this.context(session); if (!c) throw new BridgeError('outbound-context-required');
+    this.db.prepare('INSERT OR IGNORE INTO reply_routes(job,session,request) VALUES(?,?,?)').run(c.job, session, request);
+  }
+  finishReply(session) {
+    const c = this.context(session); if (!c) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const route = this.db.prepare('SELECT * FROM reply_routes WHERE job=?').get(c.job);
+      if (route && !route.closed) {
+        const explicit = this.db.prepare('SELECT 1 FROM emissions WHERE job=?').get(c.job);
+        const text = this.db.prepare('SELECT text FROM reply_candidates WHERE job=? ORDER BY seq').all(c.job).map(r => r.text).join('\n\n');
+        if (explicit || route.is_private) this.db.prepare("INSERT OR IGNORE INTO private_records(session,seq,kind,text,created) SELECT ?,seq,'note',text,? FROM reply_candidates WHERE job=?").run(session, Date.now(), c.job);
+        // Only the response phase is public. Continuation and historical notes never enter this queue.
+        if (!explicit && !route.is_private && text.trim()) {
+          const chars = Array.from(text);
+          for (let i = 0; i < chars.length; i += 8000) this.emit(session, 'automatic-reply:' + i, chars.slice(i, i + 8000).join(''));
+        }
+        this.db.prepare('UPDATE reply_routes SET closed=1 WHERE job=?').run(c.job);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   context(session) { return typeof session === 'string' ? this.db.prepare('SELECT * FROM contexts WHERE session=?').get(session) : null; }
   flag(session, field, value = 1) { if (!['rest', 'preempt'].includes(field)) throw new BridgeError('runtime-flag'); this.db.prepare(`UPDATE contexts SET ${field}=?,updated=? WHERE session=?`).run(value, Date.now(), session); }
@@ -65,11 +92,27 @@ export class RuntimeStore {
     return { id, state: 'queued', meaning: c.kind === 'test' ? '仅进入独立测试记录，不发送微信' : '持久排队，尚不代表微信已送达' };
   }
   record(session, event) {
-    if (!this.context(session)) return;
+    const c = this.context(session); if (!c) return;
     const d = event.data ?? {}, at = typeof event.time === 'number' && event.time > 100000000000 ? event.time : Date.now();
     const put = (kind, text) => { if (text) this.db.prepare('INSERT OR IGNORE INTO private_records(session,seq,kind,text,created) VALUES(?,?,?,?,?)').run(session, event.seq, kind, clean(text, Number.MAX_SAFE_INTEGER), at); };
+    const route = this.db.prepare('SELECT * FROM reply_routes WHERE job=?').get(c.job);
+    if (event.type === 'user/message' && route && d.source?.rpcId === route.request) this.db.prepare('UPDATE reply_routes SET start_seq=COALESCE(start_seq,?) WHERE job=?').run(event.seq, c.job);
+    if (event.type === 'user/message' && d.source?.kind === 'friend-continuation' && route && !route.closed && route.start_seq !== null && event.seq > route.start_seq) this.finishReply(session);
+    if (event.type === 'tool/call' && d.name === 'private_note') {
+      try {
+        const note = JSON.parse(d.arguments).text;
+        if (typeof note === 'string' && note.length <= 16000 && clean(note, 16000) === note) {
+          put('note', note);
+          if (route && !route.closed && route.start_seq !== null && event.seq > route.start_seq) this.db.prepare('UPDATE reply_routes SET is_private=1 WHERE job=?').run(c.job);
+        }
+      } catch { /* malformed tool arguments are rejected by DSH */ }
+    }
     if (event.type === 'assistant/message') {
-      for (const kind of ['reasoning', 'text']) put(kind === 'text' ? 'note' : kind, (d.message?.content ?? []).filter(b => b.type === kind).map(b => b.text ?? '').join('\n'));
+      put('reasoning', (d.message?.content ?? []).filter(b => b.type === 'reasoning').map(b => b.text ?? '').join('\n'));
+      const text = (d.message?.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
+      if (text && route && !route.closed && !route.is_private && route.start_seq !== null && event.seq > route.start_seq && !this.db.prepare('SELECT 1 FROM emissions WHERE job=?').get(c.job)) {
+        this.db.prepare('INSERT OR IGNORE INTO reply_candidates VALUES(?,?,?)').run(c.job, event.seq, clean(text, Number.MAX_SAFE_INTEGER));
+      } else if (!this.db.prepare('SELECT 1 FROM reply_candidates WHERE job=? AND seq=?').get(c.job, event.seq)) put('note', text);
       if (d.usage) put('usage', JSON.stringify(d.usage));
     }
     if (event.type === 'system/message') put('prompt', typeof d.message?.content === 'string' ? d.message.content : JSON.stringify(d));
@@ -91,7 +134,7 @@ export class RuntimeStore {
   cancelAlarm(session, id) { return { changed: this.db.prepare("UPDATE alarms SET state='cancelled' WHERE session=? AND id=? AND state='scheduled'").run(session, id).changes }; }
   clearTest(session) {
     this.db.exec('BEGIN IMMEDIATE');
-    try { for (const table of ['contexts', 'emissions', 'private_records', 'alarms']) this.db.prepare(`DELETE FROM ${table} WHERE session=?`).run(session); this.db.exec('COMMIT'); }
+    try { this.db.prepare('DELETE FROM reply_candidates WHERE job IN (SELECT job FROM reply_routes WHERE session=?)').run(session); for (const table of ['reply_routes', 'contexts', 'emissions', 'private_records', 'alarms']) this.db.prepare(`DELETE FROM ${table} WHERE session=?`).run(session); this.db.exec('COMMIT'); }
     catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   promptView(session, kind) {

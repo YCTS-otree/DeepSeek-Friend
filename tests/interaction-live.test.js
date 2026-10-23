@@ -32,6 +32,7 @@ test('REAL Flash: upgrade a tool-less legacy session, vision, multiple messages,
     let running;
     async function run(text, images = [], continuation = false) {
       const requestId = randomUUID(), records = new Map(); let listener, timer;
+      runtime.prepareReply(session, requestId);
       const result = new Promise((resolve, reject) => {
         timer = setTimeout(() => reject(Error('interaction-live-timeout')), 75000);
         listener = (sid, frame) => {
@@ -41,7 +42,8 @@ test('REAL Flash: upgrade a tool-less legacy session, vision, multiple messages,
           if (!user) return;
           const start = all.filter(e => e.type === 'turn/start' && e.seq < user.seq).at(-1), events = all.filter(e => e.seq > user.seq && (e.data.turn === undefined || e.data.turn === start?.data.turn));
           if (!start) return;
-          if (continuation && events.filter(e => e.type === 'assistant/message').length >= 2) resolve(events);
+          const continuationInput = events.find(e => e.type === 'user/message' && e.data.source?.kind === 'friend-continuation');
+          if (continuation && continuationInput && events.some(e => e.type === 'assistant/message' && e.seq > continuationInput.seq)) resolve(events);
           const end = events.find(e => e.type === 'turn/end');
           if (end) end.data.reason?.kind === 'completed' && !continuation ? resolve(events) : reject(Error('interaction-live-incomplete:' + start.data.turn + ':' + end.data.reason?.kind + ':' + events.filter(e => e.type === 'assistant/message').length));
         }; client.on('session', listener);
@@ -56,16 +58,24 @@ test('REAL Flash: upgrade a tool-less legacy session, vision, multiple messages,
       await run('这是工具接口测试。请依次调用 weixin_send_message 发两条独立消息，内容分别是 LIVE_FIRST 和 LIVE_SECOND，然后调用 take_rest。不要合并消息，不要调用其他工具。');
       const messages = runtime.db.prepare("SELECT text FROM emissions WHERE job='live-multi' ORDER BY created,rowid").all();
       assert.equal(messages.length, 2); assert.equal(messages[0].text, 'LIVE_FIRST'); assert.equal(messages[1].text, 'LIVE_SECOND');
+      runtime.bind(session, 'live-ordinary', 'test');
+      await run('路由回归测试：请直接以普通回复正文输出 LIVE_AUTOMATIC_REPLY。不要调用发送工具或其他工具；测试已关闭持续运行。');
+      assert.equal(runtime.db.prepare("SELECT text FROM emissions WHERE job='live-ordinary'").get()?.text, 'LIVE_AUTOMATIC_REPLY');
+      runtime.bind(session, 'live-private-note', 'test');
+      await run('只调用 private_note 保存 LIVE_PRIVATE_ONLY，再调用 take_rest。不要发送任何对外回复，也不要输出普通正文。');
+      assert.equal(runtime.db.prepare("SELECT count(*) n FROM emissions WHERE job='live-private-note'").get().n, 0);
+      assert.ok(runtime.thoughts(session).entries.some(e => e.kind === 'note' && e.text === 'LIVE_PRIVATE_ONLY'));
       runtime.bind(session, 'live-vision', 'test');
       await run('只根据随附图片判断：图片主要是什么颜色？用中文颜色名称调用 weixin_send_message 回答，再调用 take_rest。', [{ type: 'image', mediaType: 'image/png', data: redPng().toString('base64'), name: 'red-fixture.png' }]);
       assert.match(runtime.db.prepare("SELECT text FROM emissions WHERE job='live-vision'").get()?.text ?? '', /红/);
       runtime.bind(session, 'live-continuation', 'test'); runtime.configure({ continuous: true, reasoningEffort: 'low', maxTokens: 2048 });
-      const events = await run('现在验收持续思考。请不要发送微信消息，不调用任何工具或 take_rest；每一步仅输出一条很短的私有笔记。测试程序会主动停止，不需要你结束。', [], true);
+      const events = await run('现在验收持续思考。请不要发送微信消息，不调用 take_rest；只用 private_note 保存很短的私有笔记，不输出普通正文。测试程序会主动停止，不需要你结束。', [], true);
       runtime.flag(session, 'rest'); runtime.configure({ continuous: false }); await client.rpc('session/cancel', { sessionId: session });
       assert.ok(events.filter(e => e.type === 'assistant/message').length >= 2);
       assert.ok(runtime.thoughts(session).entries.some(e => e.kind === 'note'));
       assert.ok(runtime.thoughts(session).entries.some(e => e.kind === 'reasoning'));
       assert.ok(events.some(e => e.type === 'user/message' && e.data.source?.kind === 'friend-continuation'));
-      console.log(JSON.stringify({ model: 'DeepSeek-V41-Flash', vision: true, multipleMessages: true, nativeContinuation: true, privateRecords: true }));
+      assert.equal(runtime.db.prepare("SELECT count(*) n FROM emissions WHERE job='live-continuation'").get().n, 0);
+      console.log(JSON.stringify({ model: 'DeepSeek-V41-Flash', vision: true, multipleMessages: true, ordinaryReply: true, privateNoteIsolated: true, nativeContinuation: true, privateRecords: true }));
     } finally { runtime.flag(session, 'rest'); runtime.configure({ continuous: false }); await client.rpc('session/cancel', { sessionId: session }).catch(() => {}); ac.abort(); if (running) await running; runtime.close(); cognitive.close(); }
   });

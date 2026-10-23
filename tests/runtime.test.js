@@ -10,7 +10,7 @@ import { Engine } from '../src/engine.js';
 import { Store } from '../src/store.js';
 import { loadConfig } from '../src/config.js';
 import { control } from '../src/controls.js';
-import { FakeDsh, account, incoming, turn } from './helpers.js';
+import { FakeDsh, account, incoming, turn, event } from './helpers.js';
 
 function fixture(t, cognitive = false) {
   const dir = path.resolve('.research/runtime-tests', randomUUID()); fs.mkdirSync(dir, { recursive: true });
@@ -71,6 +71,53 @@ test('failed model turns retain a safe code in status after completion without e
   assert.equal(f.store.stats().issues[0].error, 'dsh-agent-INVALID_REQUEST');
   assert.ok(!JSON.stringify(f.store.stats()).includes('PRIVATE-PROVIDER'));
   const status = await f.control('runtime-status'); assert.equal(status.jobs[0].error, 'dsh-agent-INVALID_REQUEST');
+});
+test('ordinary response reaches Weixin once, retains both sides of chat and never sends reasoning', async t => {
+  const f = fixture(t); f.ingest(incoming('hello', 'normal')); await f.engine.submit(f.job('normal')); const j = f.job('normal');
+  for (const frame of turn(j.request_id, '正常回复')) await f.engine.onSession(j.session, frame);
+  const reopened = new RuntimeStore(f.dir); try { reopened.finishReply(j.session); } finally { reopened.close(); }
+  await f.engine.flushEmissions(); await f.engine.flushEmissions(); while (await f.engine.sendOne()) {}
+  assert.deepEqual(f.sent.map(r => r.msg.item_list[0].text_item.text), ['正常回复']);
+  assert.ok(f.store.sessionControl('history', { session: j.session }).entries.some(e => e.role === 'assistant' && e.text === '正常回复'));
+  assert.ok(!JSON.stringify(f.sent).includes('SECRET'));
+});
+
+test('reply is delivered before autonomous continuation, whose text and explicit private notes stay private', async t => {
+  const f = fixture(t); f.runtime.configure({ continueDelayMs: 0 }); f.ingest(incoming('hello', 'continue')); await f.engine.submit(f.job('continue')); const j = f.job('continue');
+  for (const frame of turn(j.request_id, '先回复').slice(0, 3)) await f.engine.onSession(j.session, frame);
+  let injected = false;
+  await f.hooks.get('agent/turn-stopping')({ agent: { id: j.session, inject: () => { injected = true; } }, signal: f.signal });
+  assert.equal(injected, true); await f.engine.flushEmissions(); await f.engine.sendOne(); assert.equal(f.sent.length, 1);
+  for (const frame of [event(3, 'user/message', { source: { kind: 'friend-continuation' } }), event(4, 'assistant/message', { turn: 1, message: { content: [{ type: 'text', text: 'PRIVATE-CONTINUATION' }] } }), event(5, 'tool/call', { turn: 1, name: 'private_note', arguments: JSON.stringify({ text: 'PRIVATE-TOOL-NOTE' }) }), event(6, 'turn/end', { turn: 1, reason: { kind: 'completed' } })]) await f.engine.onSession(j.session, frame);
+  await f.engine.flushEmissions(); assert.equal(await f.engine.sendOne(), false);
+  assert.ok(f.runtime.thoughts(j.session).entries.some(r => r.text === 'PRIVATE-CONTINUATION'));
+  assert.ok(f.runtime.thoughts(j.session).entries.some(r => r.text === 'PRIVATE-TOOL-NOTE'));
+  assert.ok(!JSON.stringify(f.sent).includes('PRIVATE'));
+});
+
+test('stopping without continuous mode still sends ordinary replies; private-only, alarm and historical notes are not promoted', async t => {
+  const f = fixture(t); f.runtime.configure({ continuous: false }); f.ingest(incoming('hello', 'boundary')); await f.engine.submit(f.job('boundary')); const j = f.job('boundary');
+  for (const frame of turn(j.request_id, '正常结束').slice(0, 3)) await f.engine.onSession(j.session, frame);
+  await f.hooks.get('agent/turn-stopping')({ agent: { id: j.session, inject: () => assert.fail('disabled continuation') }, signal: f.signal });
+  assert.equal(f.runtime.db.prepare('SELECT count(*) n FROM emissions').get().n, 1);
+  f.runtime.bind(j.session, 'private-only', 'test', null, 'private-request');
+  f.runtime.record(j.session, event(20, 'user/message', { source: { rpcId: 'old-request' } }).event);
+  f.runtime.record(j.session, event(21, 'assistant/message', { message: { content: [{ type: 'text', text: 'HISTORICAL' }] } }).event);
+  f.runtime.finishReply(j.session);
+  f.runtime.bind(j.session, 'alarm', 'alarm'); f.runtime.record(j.session, event(30, 'assistant/message', { message: { content: [{ type: 'text', text: 'PRIVATE-ALARM' }] } }).event); f.runtime.finishReply(j.session);
+  assert.equal(f.runtime.db.prepare('SELECT count(*) n FROM emissions').get().n, 1);
+});
+
+test('choosing private_note suppresses even an accidental closing body, but explicit outward messages remain possible', async t => {
+  const f = fixture(t); f.ingest(incoming('hello', 'private')); await f.engine.submit(f.job('private')); const j = f.job('private');
+  const frames = turn(j.request_id, 'PRIVATE-CLOSING-BODY');
+  for (const frame of frames.slice(0, 2)) await f.engine.onSession(j.session, frame);
+  await f.engine.onSession(j.session, event(2, 'tool/call', { name: 'private_note', arguments: JSON.stringify({ text: 'PRIVATE-EXPLICIT-NOTE' }) }));
+  const body = frames[2]; body.event.seq = 3; await f.engine.onSession(j.session, body);
+  frames[3].event.seq = 4; await f.engine.onSession(j.session, frames[3]);
+  await f.engine.flushEmissions(); assert.equal(await f.engine.sendOne(), false);
+  f.runtime.emit(j.session, 'chosen-public', '明确对外'); await f.engine.flushEmissions(); await f.engine.sendOne();
+  assert.deepEqual(f.sent.map(r => r.msg.item_list[0].text_item.text), ['明确对外']);
 });
 test('native stopping hook continues without a step/token counter; rest and new input preemption both stop continuation', async t => {
   const f = fixture(t); f.runtime.configure({ continueDelayMs: 0 });

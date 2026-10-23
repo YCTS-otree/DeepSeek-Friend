@@ -129,7 +129,10 @@ export class Engine {
     if (reason !== 'completed') text = 'DSH 本轮未正常完成（' + (['aborted', 'blocked', 'interrupted', 'error', 'failed'].includes(reason) ? reason : 'unknown') + '）。' + (text ? '\n\n' + text : '');
     if (!text) text = 'DSH 已结束本轮，未产生可发送的文本。';
     if (!this.explicit) this.store.reply(job, text, 'result:' + job.id, this.config.bridge.maxReplyChars);
-    else text = this.runtime.db.prepare('SELECT text,image FROM emissions WHERE job=? ORDER BY created,rowid').all(job.id).map(e => e.image ? '[图片 ' + e.image + ']' : e.text).join('\n\n');
+    else {
+      if (reason === 'completed') this.runtime.finishReply(sid);
+      text = this.runtime.db.prepare('SELECT text,image FROM emissions WHERE job=? ORDER BY created,rowid').all(job.id).map(e => e.image ? '[图片 ' + e.image + ']' : e.text).join('\n\n');
+    }
     const failure = reason === 'completed' ? null : end.data.reason?.error?.code ? 'dsh-agent-' + end.data.reason.error.code : 'dsh-turn-' + (['aborted', 'blocked', 'interrupted', 'error', 'failed'].includes(reason) ? reason : 'unknown');
     this.store.updateJob(job.id, 'done', failure);
     this.runtime?.flag(sid, 'rest');
@@ -161,7 +164,7 @@ export class Engine {
     try {
       if (this.explicit) {
         this.runtime.rememberContact(job);
-        this.runtime.bind(session, job.id, this.store.session(session)?.kind === 'test' ? 'test' : job.kind === 'alarm' ? 'alarm' : 'conversation', job.kind === 'alarm' ? null : this.runtime.contactId(job));
+        this.runtime.bind(session, job.id, this.store.session(session)?.kind === 'test' ? 'test' : job.kind === 'alarm' ? 'alarm' : 'conversation', job.kind === 'alarm' ? null : this.runtime.contactId(job), job.kind === 'alarm' ? null : job.request_id);
       }
       this.cognition(session)?.bind(job, session);
       let savedPayload = JSON.parse(this.store.job(job.id).payload);
