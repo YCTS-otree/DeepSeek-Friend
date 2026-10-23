@@ -6,7 +6,7 @@ import { CognitiveService } from './cognitive/service.js';
 import { RuntimeStore } from './runtime.js';
 import { MediaClient } from './media.js';
 import { QQChannel } from './qq.js';
-import { OWNER_QQ } from './contacts.js';
+import { OWNER_QQ, qqDestination } from './contacts.js';
 import { QQMedia } from './qq-media.js';
 import { expandForward } from './qq-forward.js';
 
@@ -177,7 +177,7 @@ export class Engine {
       let savedPayload = JSON.parse(this.store.job(job.id).payload);
       if(savedPayload.forwards?.length && !savedPayload.forwardText){
         preparingImages='聊天记录';
-        const expanded=await expandForward(savedPayload.forwards,(_action,args)=>this.qq.readForward(args.id,job.user),{maxChars:Math.max(256,this.config.bridge.maxTextChars-savedPayload.text.length-256),maxImages:this.config.media.enabled?Math.max(0,this.config.media.maxImages-(savedPayload.images?.length??0)):0});
+        const expanded=await expandForward(savedPayload.forwards,(_action,args)=>this.qq.readForward(args.id,job.user,{group:savedPayload.qqGroup?.id}),{maxChars:Math.max(256,this.config.bridge.maxTextChars-savedPayload.text.length-256),maxImages:this.config.media.enabled?Math.max(0,this.config.media.maxImages-(savedPayload.images?.length??0)):0});
         savedPayload.forwardText=expanded.text;savedPayload.text+='\n'+expanded.text;savedPayload.images=[...savedPayload.images??[],...expanded.images];
         this.store.tx(()=>{this.store.db.prepare('UPDATE jobs SET payload=? WHERE id=?').run(JSON.stringify(savedPayload),job.id);this.store.db.prepare('UPDATE chat_entries SET text=? WHERE id=?').run(savedPayload.text,'user:'+job.id);});
         preparingImages=null;
@@ -253,6 +253,8 @@ export class Engine {
     const id = existing?.id ?? randomUUID().slice(0, 12);
     const expires = existing?.expires ?? Date.now() + this.config.bridge.approvalTimeoutMs;
     const request = { ...frame.request };
+    const sourceGroup=JSON.parse(job.payload).qqGroup?.id;
+    if(sourceGroup)request._bridgeQQGroup=sourceGroup;
     // Pin the sole undecided DSH audit ID now. Never choose a later audit on approval.
     if (kind === 'approval') request._bridgeAuditId = this.approvalAudit(frame.agentId, request, frame.eventId);
     this.store.db.prepare(`INSERT INTO pending(id,session,account,user,event_id,client_id,kind,request,expires) VALUES(?,?,?,?,?,?,?,?,?)
@@ -262,7 +264,7 @@ export class Engine {
     if (pending.state !== 'pending') return;
     if (kind === 'approval') {
       const binding = this.approvalBinding(pending);
-      if (!this.config.bridge.allowApprovals || !binding) {
+      if (!this.config.bridge.allowApprovals || !binding || sourceGroup) {
         this.store.db.prepare("UPDATE pending SET state='answering' WHERE id=?").run(id);
         await this.dsh.result(pending, 'rejected', this.signal);
         this.store.db.prepare("UPDATE pending SET state='done' WHERE id=?").run(id);
@@ -279,6 +281,8 @@ export class Engine {
   }
   async command(job) {
     const text = JSON.parse(job.payload).text.trim(); const [cmd, id] = text.split(/\s+/);
+    const group=JSON.parse(job.payload).qqGroup?.id;
+    if(group&&!['/status','/answer'].includes(cmd))throw new BridgeError('qq-group-command-private-only');
     if (job.account.startsWith('qq:') && job.user !== OWNER_QQ && !['/status','/answer'].includes(cmd)) throw new BridgeError('owner-command-required');
     const map = this.store.session(job.session)?.kind === 'test' ? { session: job.session } : this.store.mapping(job.account, job.user);
     let reply = '命令未执行。';
@@ -312,6 +316,7 @@ export class Engine {
       reply = '已请求取消 DSH 任务并清理本会话排队消息。';
     } else {
       const p = this.store.db.prepare("SELECT * FROM pending WHERE id=? AND account=? AND user=? AND state='pending'").get(id ?? '', job.account, job.user);
+      if(p&&(JSON.parse(p.request)._bridgeQQGroup??null)!==(group??null))throw new BridgeError('pending-stale-or-foreign');
       if (!p || !map || p.session !== map.session || p.expires <= Date.now() || p.client_id !== this.dsh.clientId) throw new BridgeError('pending-stale-or-foreign');
       let value;
       if (p.kind === 'approval' && ['/approve', '/deny'].includes(cmd)) {
@@ -354,6 +359,10 @@ export class Engine {
     for (const job of jobs) {
       const key = job.session ?? this.store.ensureMapping(job.account, job.user).session;
       if (this.busy.has(key) || this.busy.size >= this.config.bridge.concurrency) continue;
+      const group=JSON.parse(job.payload).qqGroup?.id;
+      if(group&&!this.qq?.allowed(job.account,'group:'+group)){
+        this.store.updateJob(job.id,job.state==='submitting'?'review':'done',job.state==='submitting'?'qq-group-disabled-admission-unknown':'qq-group-disabled');continue;
+      }
       const control = isCommand(JSON.parse(job.payload).text);
       if (!control && this.runtime?.settings().paused) continue;
       if (this.testMaintenance && this.store.session(key)?.kind === 'test') continue;
@@ -451,7 +460,7 @@ export class Engine {
       const discovered = !test && this.runtime.db.prepare("SELECT account,user FROM contacts WHERE job=? AND account LIKE 'qq:%'").get(row.delivery_job);
       const delivery = test ? null : this.store.job(row.delivery_job) ?? (discovered ? { ...discovered, payload: '{"channel":"qq"}' } : null);
       const allowed = new Set([this.account.ownerId, ...this.config.weixin.allowedUsers]);
-      if (!test && (!delivery || (delivery.account.startsWith('qq:') ? !this.qq?.allowed(delivery.account, delivery.user) : delivery.account !== this.account.accountId || !allowed.has(delivery.user) || !JSON.parse(delivery.payload).context))) {
+      if (!test && (!delivery || (delivery.account.startsWith('qq:') ? !this.qq?.allowed(delivery.account, qqDestination(delivery)) : delivery.account !== this.account.accountId || !allowed.has(delivery.user) || !JSON.parse(delivery.payload).context))) {
         this.runtime.db.prepare("UPDATE emissions SET state='blocked' WHERE id=?").run(row.id); continue;
       }
       this.store.tx(() => {
@@ -459,8 +468,9 @@ export class Engine {
         if (!test) {
           if (row.image) {
             const p = JSON.parse(delivery.payload), clientId = 'dsfriend-' + createHash('sha256').update(row.id).digest('hex').slice(0, 40);
-            this.store.db.prepare('INSERT OR IGNORE INTO outbox(id,account,user,body,created) VALUES(?,?,?,?,?)').run('image:' + row.id, delivery.account, delivery.user,
-              JSON.stringify(delivery.account.startsWith('qq:')?{qq:{account:delivery.account,user:delivery.user,image:row.image}}:{ imageJob: { image: row.image, context: p.context, runId: p.runId, clientId } }), row.created);
+            const recipient=delivery.account.startsWith('qq:')?qqDestination(delivery):delivery.user;
+            this.store.db.prepare('INSERT OR IGNORE INTO outbox(id,account,user,body,created) VALUES(?,?,?,?,?)').run('image:' + row.id, delivery.account, recipient,
+              JSON.stringify(delivery.account.startsWith('qq:')?{qq:{account:delivery.account,user:recipient,image:row.image}}:{ imageJob: { image: row.image, context: p.context, runId: p.runId, clientId } }), row.created);
           } else this.store.reply({ ...delivery, session: row.session }, row.text, 'emission:' + row.id, this.config.bridge.maxReplyChars);
         }
       });

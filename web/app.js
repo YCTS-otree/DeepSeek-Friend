@@ -152,7 +152,7 @@ function renderHistory() {
     const row = document.createElement('article'); row.className = 'chat-entry ' + entry.role;
     const head = document.createElement('div'); head.className = 'chat-entry-head';
     const who = entry.role === 'assistant' ? '小鲸鱼' : entry.role === 'bridge' ? '连接提示' : entry.actor.displayName || entry.actor.userId || '用户';
-    head.textContent = who + (entry.role === 'user' && entry.actor.channel ? ' · ' + entry.actor.channel + ' / ' + entry.actor.userId + (entry.actor.trustedOwner ? ' · 可信 OTREE' : ' · 未认证为 OTREE') : '') + ' · ' + new Date(entry.created).toLocaleString();
+    head.textContent = who + (entry.role === 'user' && entry.actor.channel ? ' · ' + entry.actor.channel + ' / ' + entry.actor.userId + (entry.actor.trustedOwner ? ' · 可信 OTREE' : ' · 未认证为 OTREE') : '') + (entry.actor.qqGroup?' · 群 '+entry.actor.qqGroup.name+' / '+entry.actor.qqGroup.id:'') + ' · ' + new Date(entry.created).toLocaleString();
     const body = document.createElement('p'); body.textContent = entry.text; row.append(head, body); el.append(row);
   }
 }
@@ -284,10 +284,25 @@ async function loadChannelStatus() {
 }
 async function loadChannels() {
   const data = await loadChannelStatus();
+  await loadQQGroups();
   if (!channelDirty) { $('qq-url').value = data.qq.settings.url; $('qq-enabled').checked = data.qq.settings.enabled; $('internet-enabled').checked = data.internet.enabled; $('internet-hosts').value = data.internet.allowedHosts.join(', '); }
   const contacts = await sessionRequest('contacts-list'); $('contacts-list').replaceChildren();
   for (const c of contacts.entries) { const row = document.createElement('div'); row.className = 'alarm-row'; const text = document.createElement('span'); text.textContent = c.channel + ' · ' + c.peer + ' · ' + c.alias + (c.trustedOwner ? ' · 代码核验为 OTREE' : ' · 备注不代表认证'); const edit = document.createElement('button'); edit.className = 'text-button'; edit.textContent = '编辑'; edit.addEventListener('click', () => { $('contact-channel').value = c.channel; $('contact-peer').value = c.peer; $('contact-alias').value = c.alias; $('contact-notes').value = c.notes; }); row.append(text, edit); $('contacts-list').append(row); }
 }
+async function loadQQGroups(refresh=false) {
+  const data=await sessionRequest('qq-groups-list',{refresh});
+  $('qq-groups-list').replaceChildren();
+  for(const group of data.groups){
+    const row=document.createElement('div');row.className='alarm-row';
+    const label=document.createElement('span');label.textContent=group.name+' · '+group.id+(group.members===null?'':' · '+group.members+' 人')+' · '+(group.enabled?'已启用':'已停用');
+    const toggle=document.createElement('button');toggle.type='button';toggle.className='text-button';toggle.textContent=group.enabled?'停用':'启用';toggle.disabled=!data.connected;
+    toggle.addEventListener('click',async()=>{toggle.disabled=true;try{await sessionRequest('qq-group-configure',{groupId:group.id,enabled:!group.enabled});$('qq-groups-notice').textContent=group.name+(group.enabled?' 已停用，聊天历史保留。':' 已启用，新消息进入当前会话。');await loadQQGroups();}catch(e){failNotice('qq-groups-notice',e);toggle.disabled=!data.connected;}});
+    row.append(label,toggle);$('qq-groups-list').append(row);
+  }
+  if(!data.connected)$('qq-groups-notice').textContent='QQ 未连接，显示上次群列表；连接后可修改。';
+  else if(!data.groups.length)$('qq-groups-notice').textContent='尚未加入群聊；加入后刷新列表。';
+}
+$('qq-groups-refresh').addEventListener('click',()=>{void loadQQGroups(true).catch(e=>failNotice('qq-groups-notice',e));});
 for (const id of ['qq-form','internet-form']) $(id).addEventListener('input', () => { channelDirty = true; });
 $('qq-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('qq-configure', { enabled: $('qq-enabled').checked, url: $('qq-url').value, ...($('qq-token').value ? { token: $('qq-token').value } : {}) }); $('qq-token').value = ''; channelDirty = false; $('channels-notice').textContent = '已保存；服务运行时自动连接。'; await loadChannels(); } catch (err) { failNotice('channels-notice', err); } });
 $('contacts-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('contacts-edit', { channel: $('contact-channel').value, peer: $('contact-peer').value, alias: $('contact-alias').value, notes: $('contact-notes').value }); $('channels-notice').textContent = '备注已保存，后续消息按真实账号匹配。'; await loadChannels(); } catch (err) { failNotice('channels-notice', err); } });

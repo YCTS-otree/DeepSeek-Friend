@@ -6,7 +6,7 @@ import vm from 'node:vm';
 function page() {
   const nodes = new Map();
   function node() { return { children: [], firstChild: { textContent: '' }, textContent: '', value: '', hidden: false, disabled: false,
-    replaceChildren() { this.children = []; }, append(...children) { this.children.push(...children); }, addEventListener() {},
+    replaceChildren() { this.children = []; }, append(...children) { this.children.push(...children); }, listeners: {}, addEventListener(name,handler) {this.listeners[name]=handler;},
     removeAttribute(name) { delete this[name]; },
     querySelector() { return node(); }, classList: { add() {}, remove() {} } }; }
   const get = id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); };
@@ -15,6 +15,14 @@ function page() {
   vm.runInContext(fs.readFileSync('web/app.js', 'utf8') + '\nstate = {csrf:"fixture"};', context);
   return { context, get, run: code => vm.runInContext(code, context), respond: fn => { context.fetch = async (_url, request) => ({ ok: true, json: async () => fn(JSON.parse(request.body)) }); } };
 }
+
+test('group management shows escaped names, persists only the selected switch and disables offline changes',async()=>{
+ const p=page(),requests=[];let enabled=false;
+ p.respond(body=>{requests.push(body);if(body.action==='qq-group-configure'){enabled=body.args.enabled;return{enabled};}return{connected:true,groups:[{id:'1131809600',name:'<script>不是HTML</script>',members:4,enabled}]};});
+ await p.run('loadQQGroups()');let row=p.get('qq-groups-list').children[0];assert.match(row.children[0].textContent,/<script>不是HTML<\/script>/);assert.equal(row.children[1].textContent,'启用');
+ await row.children[1].listeners.click();assert.equal(enabled,true);assert.ok(requests.some(r=>r.action==='qq-group-configure'&&r.args.groupId==='1131809600'));assert.equal(p.get('qq-groups-list').children[0].children[1].textContent,'停用');
+ p.respond(()=>({connected:false,groups:[{id:'1131809600',name:'缓存群',members:4,enabled:true}]}));await p.run('loadQQGroups()');assert.equal(p.get('qq-groups-list').children[0].children[1].disabled,true);assert.match(p.get('qq-groups-notice').textContent,/未连接/);
+});
 test('selecting an empty archived session clears the previous session transcript immediately', async () => {
   const p = page(); p.run('selectSession("a"); historyEntries = [{n:1,role:"assistant",actor:{},text:"private to A",created:1}]; renderHistory();');
   assert.equal(p.get('chat-history').children.length, 1);

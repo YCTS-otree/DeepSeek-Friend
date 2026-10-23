@@ -3,6 +3,10 @@ import { clean } from './cognitive/store.js';
 
 export const OWNER_QQ = '3626097226';
 export const qqId = value => typeof value === 'number' && Number.isSafeInteger(value) ? qqId(String(value)) : typeof value === 'string' && /^[1-9]\d{4,11}$/.test(value) ? value : null;
+export function qqDestination(job) {
+  const p=typeof job.payload==='string'?JSON.parse(job.payload):job.payload;
+  return p?.qqGroup?.id?'group:'+p.qqGroup.id:job.user;
+}
 export function senderActor(job, account = {}, entry, profile = {}) {
   const channel = job.account.startsWith('qq:') ? 'qq' : 'weixin';
   const trustedOwner = channel === 'qq' ? job.user === OWNER_QQ : job.account === account.accountId && job.user === account.ownerId;
@@ -29,7 +33,11 @@ export class AddressBook {
     const channel = job.account.startsWith('qq:') ? 'qq' : 'weixin';
     const entry = this.db.prepare('SELECT alias,notes FROM address_book WHERE channel=? AND peer=?').get(channel, job.user);
     const profile = this.db.prepare('SELECT nickname,remark FROM contact_profiles WHERE channel=? AND peer=?').get(channel,job.user);
-    return senderActor(job,account,entry,profile??{});
+    const actor=senderActor(job,account,entry,profile??{}),p=typeof job.payload==='string'?JSON.parse(job.payload):job.payload;
+    if(channel==='qq'&&qqId(p?.qqGroup?.id)){
+      actor.qqGroup=p.qqGroup;actor.audience='qq-group';actor.groupCard=clean(String(p.actor?.groupCard??''),80);actor.sourceLabel='QQ群消息 · '+actor.displayName;
+    }
+    return actor;
   }
   observeQQ(peer, profile) {
     if(!qqId(peer))throw new BridgeError('contact-invalid');

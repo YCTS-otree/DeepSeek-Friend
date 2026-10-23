@@ -25,7 +25,7 @@ async function fixture(t) {
   const store=new Store(path.join(dir,'bridge.sqlite')), dsh=new FakeDsh(), ac=new AbortController(), wx=[], actions=[];
   const engine=new Engine(config,store,dsh,{send:async b=>{wx.push(b);return{};}},account,ac.signal);
   const server=new WebSocketServer({host:'127.0.0.1',port:0}); await new Promise(r=>server.once('listening',r)); let socket,dropSend=false;
-  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(m.action==='send_private_msg'&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:m.action==='get_forward_msg'?{messages:[{type:'node',data:{nickname:'OTREE',user_id:3626097226,message:[{type:'text',data:{text:'FORWARD_FIXTURE_TEXT'}},{type:'image',data:{url:'https://gchat.qpic.cn/fixture.png'}},{type:'video',data:{url:'https://example.invalid/no-download'}}]}}]}:m.action==='fetch_custom_face_detail'?[{resId:'fixture-favorite',url:'https://gchat.qpic.cn/fixture.png',desc:'合成图片'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
+  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(['send_private_msg','send_group_msg'].includes(m.action)&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_group_list'?[{group_id:1131809600,group_name:'测试鱼池',member_count:4},{group_id:866398619,group_name:'未启用群',member_count:2}]:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:m.action==='get_forward_msg'?{messages:[{type:'node',data:{nickname:'OTREE',user_id:3626097226,message:[{type:'text',data:{text:'FORWARD_FIXTURE_TEXT'}},{type:'image',data:{url:'https://gchat.qpic.cn/fixture.png'}},{type:'video',data:{url:'https://example.invalid/no-download'}}]}}]}:m.action==='fetch_custom_face_detail'?[{resId:'fixture-favorite',url:'https://gchat.qpic.cn/fixture.png',desc:'合成图片'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
   engine.qq.credentials=()=>({token:'MOCK_ONLY_TOKEN'}); engine.runtime.saveChannelSettings('qq',{enabled:true,url:'ws://127.0.0.1:'+server.address().port});
   const running=engine.qq.run(); await until(()=>engine.qq.state==='connected');
   t.after(async()=>{ac.abort();await running;await engine.drain();for(const s of server.clients)s.terminate();await new Promise(r=>server.close(r));engine.runtime.close();store.close();});
@@ -176,4 +176,68 @@ test('numeric NapCat forward lookup restores only the requesting sender recent I
  const f=await fixture(t),calls=[];let attempts=0;f.engine.qq.rpc=async(action,args)=>{calls.push({action,args});if(action==='get_forward_msg'){if(++attempts===1)throw new BridgeError('qq-action-rejected');return{messages:[]};}return{messages:[{user_id:3626097226,message:[{type:'forward',data:{id:'123456'}}]}]};};
  assert.deepEqual(await f.engine.qq.readForward('123456','3626097226'),{messages:[]});assert.equal(attempts,2);assert.equal(calls[1].args.user_id,'3626097226');assert.equal(calls[1].args.count,20);
  f.engine.qq.rpc=async(action)=>{if(action==='get_forward_msg')throw new BridgeError('qq-action-rejected');return{messages:[{user_id:3326487557,message:[{type:'forward',data:{id:'123456'}}]}]};};await assert.rejects(f.engine.qq.readForward('123456','3626097226'),{code:'qq-action-rejected'});
+});
+
+test('operator group switches persist, reject unjoined groups, and do not change friend settings',async t=>{
+ const f=await fixture(t);let list=await f.control('qq-groups-list');assert.equal(list.groups.length,2);assert.ok(list.groups.every(g=>!g.enabled));
+ await assert.rejects(f.control('qq-group-configure',{groupId:'123456',enabled:true}),{code:'qq-group-not-joined'});
+ await assert.rejects(f.control('qq-group-configure',{groupId:'1131809600',enabled:'yes'}),{code:'qq-group-config-invalid'});
+ await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});await f.engine.qq.refreshGroups();assert.equal(f.engine.qq.groupEnabled('1131809600'),true);assert.equal(f.engine.qq.groupEnabled('866398619'),false);
+ assert.equal(f.engine.runtime.contacts().find(c=>c.kind==='group').groupId,'1131809600');assert.equal(f.engine.runtime.contacts().filter(c=>c.kind==='private').length,2);
+ await f.control('qq-group-configure',{groupId:'1131809600',enabled:false});assert.equal(f.engine.qq.allowed(f.engine.qq.account,'group:1131809600'),false);assert.equal(f.engine.runtime.contacts().filter(c=>c.kind==='group').length,0);
+});
+
+test('enabled groups accept non-friend senders without authenticating their cards, dedupe and reply to that group in the shared Session',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});
+ const sid=f.store.ensureMapping(account.accountId,'alice').session;
+ const groupMessage={message_type:'group',group_id:1131809600,message_id:'group-native',sender:{nickname:'朋友的小鲸鱼',card:'OTREE',user_id:3626097226},message:[{type:'reply',data:{id:'-12345'}},{type:'at',data:{qq:'99990000'}},{type:'text',data:{text:'群聊消息'}},{type:'face',data:{id:76}}]};
+ f.send(88776655,'',groupMessage);f.send(88776655,'',groupMessage);f.send(88776655,'ignored',{message_type:'group',group_id:866398619});f.send(99990000,'self',{message_type:'group',group_id:1131809600});
+ await until(()=>f.store.db.prepare('SELECT count(*) n FROM jobs').get().n===1);
+ const j=f.store.db.prepare('SELECT * FROM jobs').get();assert.equal(j.user,'88776655');assert.equal(j.session,sid);assert.equal(JSON.parse(j.payload).actor.trustedOwner,false);assert.equal(JSON.parse(j.payload).actor.groupCard,'OTREE');
+ await f.engine.submit(j);const prompt=f.dsh.calls.find(c=>c.endpoint==='session/prompt').args.content[0].text;assert.match(prompt,/QQ群消息/);assert.match(prompt,/1131809600/);assert.match(prompt,/@99990000/);assert.match(prompt,/回复消息 -12345/);assert.match(prompt,/QQ表情 76/);
+ for(const e of turn(j.request_id,'群里的回复'))await f.engine.onSession(sid,e);await f.engine.flushEmissions();while(await f.engine.sendOne()){}
+ const sends=f.actions.filter(a=>a.action==='send_group_msg');assert.equal(sends.length,1);assert.equal(sends[0].params.group_id,1131809600);assert.equal(sends[0].params.user_id,undefined);assert.equal(f.actions.filter(a=>a.action==='send_private_msg').length,0);
+});
+
+test('group and personal destinations stay distinct; proactive text and images use enabled group recipients',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});
+ f.send(3626097226,'seed');await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());const j=f.store.db.prepare('SELECT * FROM jobs').get();await f.engine.submit(j);
+ const group=f.engine.runtime.contacts().find(c=>c.kind==='group'),privatePeer=f.engine.runtime.contacts().find(c=>c.user==='3626097226');assert.notEqual(group.id,privatePeer.id);
+ f.engine.runtime.emit(j.session,'proactive-group','主动群聊',null,group.id);
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64'),image=f.engine.media.save(png).id;
+ f.engine.runtime.emit(j.session,'group-image','',image,group.id);await f.engine.flushEmissions();while(await f.engine.sendOne()){}
+ const sends=f.actions.filter(a=>a.action==='send_group_msg');assert.equal(sends.length,2);assert.ok(sends.every(s=>s.params.group_id===1131809600));assert.equal(sends[1].params.message[0].type,'image');
+});
+
+test('disabling a group prevents queued prompts, staged emissions and pending outbox delivery without deleting history',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});f.send(88776655,'pending',{message_type:'group',group_id:1131809600});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());
+ const j=f.store.db.prepare('SELECT * FROM jobs').get();f.engine.runtime.rememberContact(j);f.engine.runtime.bind(j.session,j.id,'conversation',f.engine.runtime.contactId(j),j.request_id);
+ f.engine.runtime.emit(j.session,'staged','staged');f.store.reply(j,'pending outbox','disable-test');await f.control('qq-group-configure',{groupId:'1131809600',enabled:false});
+ await f.engine.tick();await f.engine.drain();await f.engine.flushEmissions();while(await f.engine.sendOne()){}
+ assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,0);assert.equal(f.actions.filter(a=>a.action==='send_group_msg').length,0);assert.equal(f.store.job(j.id).error,'qq-group-disabled');assert.ok(f.store.db.prepare('SELECT 1 FROM chat_entries WHERE job=?').get(j.id));assert.equal(f.engine.runtime.db.prepare('SELECT state FROM emissions WHERE job=?').get(j.id).state,'blocked');
+});
+
+test('group sends with unknown outcomes never replay and owner group commands cannot change session or approve tools',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});f.send(3626097226,'/cancel',{message_type:'group',group_id:1131809600});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());const j=f.store.db.prepare('SELECT * FROM jobs').get();
+ await assert.rejects(f.engine.command(j),{code:'qq-group-command-private-only'});
+ f.store.reply(j,'group reply','ambiguous-group');f.drop();await f.engine.sendOne();assert.equal(f.store.db.prepare('SELECT state FROM outbox').get().state,'unknown');await f.engine.sendOne();assert.equal(f.actions.filter(a=>a.action==='send_group_msg').length,1);
+});
+
+test('group tool approvals fail closed even when private approval is enabled, and questions cannot cross audiences',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});f.config.bridge.allowApprovals=true;
+ f.send(3626097226,'group task',{message_type:'group',group_id:1131809600,message_id:'group-task'});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());const j=f.store.db.prepare('SELECT * FROM jobs').get();await f.engine.submit(j);
+ // Audit correlation is tested separately; this isolates the additional public-audience gate.
+ f.engine.approvalBinding=()=>({callId:'audit-fixture'});
+ await f.engine.onRequest({agentId:j.session,clientId:f.dsh.clientId,event:'approval/request',eventId:'group-approval',request:{callId:'audit-fixture',toolName:'shell',reason:'fixture'}});
+ assert.equal(f.dsh.calls.find(c=>c.endpoint==='$events/result').value,'rejected');
+ await f.engine.onRequest({agentId:j.session,clientId:f.dsh.clientId,event:'user-questions/request',eventId:'group-question',request:{callId:'question-fixture',questions:[{id:'q',question:'fixture'}]}});
+ const question=f.store.db.prepare("SELECT * FROM pending WHERE event_id='group-question'").get();assert.equal(JSON.parse(question.request)._bridgeQQGroup,'1131809600');
+ f.send(3626097226,'/answer '+question.id+' text',{message_id:'private-answer'});await until(()=>f.store.db.prepare("SELECT 1 FROM jobs WHERE message_id='private-answer'").get());const privateAnswer=f.store.db.prepare("SELECT * FROM jobs WHERE message_id='private-answer'").get();await assert.rejects(f.engine.command(privateAnswer),{code:'pending-stale-or-foreign'});
+});
+
+test('disabling a group preserves ambiguous DSH admission for reconciliation instead of resubmitting or silently ending it',async t=>{
+ const f=await fixture(t);await f.control('qq-group-configure',{groupId:'1131809600',enabled:true});f.send(88776655,'task',{message_type:'group',group_id:1131809600});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());const j=f.store.db.prepare('SELECT * FROM jobs').get();
+ const rpc=f.dsh.rpc.bind(f.dsh);f.dsh.rpc=async(action,args)=>{if(action==='session/prompt'){await rpc(action,args);throw new BridgeError('dsh-network','',{retryable:true});}return rpc(action,args)};
+ await f.engine.submit(j);assert.equal(f.store.job(j.id).state,'submitting');await f.control('qq-group-configure',{groupId:'1131809600',enabled:false});f.store.db.prepare('UPDATE jobs SET retry_at=0 WHERE id=?').run(j.id);
+ await f.engine.tick();await f.engine.drain();assert.equal(f.store.job(j.id).state,'review');assert.equal(f.store.job(j.id).error,'qq-group-disabled-admission-unknown');assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,1);
 });

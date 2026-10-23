@@ -8,11 +8,25 @@ import { forget } from './cognitive/privacy.js';
 import { qqSettings } from './qq.js';
 import { internetSettings, previewInternet } from './internet.js';
 import { loadCredentials, saveCredentials } from './security.js';
+import { qqId } from './contacts.js';
 
 export async function control({ store, runtime, config, engine }, action, args = {}) {
   if (action === 'archive-list') { const location = path.resolve('Archive'); return { location, files: fs.existsSync(location) ? fs.readdirSync(location).filter(n => n.endsWith('.DSF')).map(name => ({ name, bytes: fs.statSync(path.join(location, name)).size })).sort((a,b) => b.name.localeCompare(a.name)) : [] }; }
   if (action === 'contacts-list') return { entries: runtime.addressBook.list(), reachable: runtime.contacts() };
   if (action === 'contacts-edit') return runtime.addressBook.edit(args);
+  if (action === 'qq-groups-list') {
+    if(args.refresh){if(engine?.qq?.state!=='connected')throw new BridgeError('qq-not-connected');await engine.qq.refreshGroups();}
+    return { connected:engine?.qq?.state==='connected',groups:engine?.qq?.state==='connected'?engine.qq.groupList():(runtime.channelSettings('qq-groups-known').groups??[]).map(g=>({...g,enabled:(runtime.channelSettings('qq-groups').allowed??[]).includes(g.id)})) };
+  }
+  if (action === 'qq-group-configure') {
+    if(Object.keys(args).some(k=>!['groupId','enabled'].includes(k))||!qqId(args.groupId)||typeof args.enabled!=='boolean')throw new BridgeError('qq-group-config-invalid');
+    if(engine?.qq?.state!=='connected')throw new BridgeError('qq-not-connected');
+    if(args.enabled&&!engine.qq.groups.has(args.groupId))throw new BridgeError('qq-group-not-joined');
+    const allowed=new Set(runtime.channelSettings('qq-groups').allowed??[]);
+    if(args.enabled)allowed.add(args.groupId);else allowed.delete(args.groupId);
+    runtime.saveChannelSettings('qq-groups',{allowed:[...allowed]});engine.qq.syncGroupContacts();
+    return {groupId:args.groupId,enabled:args.enabled};
+  }
   if (action === 'channels-status') return { qq: engine?.qq?.status() ?? { settings: qqSettings(runtime.channelSettings('qq', config.qq)), state: 'bridge-stopped', tokenSaved: Boolean(loadCredentials(config.dataDir, 'qq-connection.json')?.token) }, internet: { ...internetSettings(runtime.channelSettings('internet')), agentVisible: false } };
   if (action === 'qq-configure') {
     const { token, ...changes } = args; const settings = qqSettings(changes);

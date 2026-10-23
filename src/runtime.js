@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BridgeError, sleep } from './util.js';
 import { clean } from './cognitive/store.js';
-import { AddressBook } from './contacts.js';
+import { AddressBook, qqDestination } from './contacts.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 export const FLASH = { provider: 'deepseek-official', model: 'deepseek-flash', name: 'DeepSeek-V41-Flash' };
 export const RUNTIME_DEFAULTS = { reasoningEffort: 'high', maxTokens: 8192, continuous: true, paused: false, continueDelayMs: 1000 };
@@ -99,13 +99,22 @@ export class RuntimeStore {
   }
   context(session) { return typeof session === 'string' ? this.db.prepare('SELECT * FROM contexts WHERE session=?').get(session) : null; }
   flag(session, field, value = 1) { if (!['rest', 'preempt'].includes(field)) throw new BridgeError('runtime-flag'); this.db.prepare(`UPDATE contexts SET ${field}=?,updated=? WHERE session=?`).run(value, Date.now(), session); }
-  contactId(job) { return 'contact-' + createHash('sha256').update(job.account + '\0' + job.user).digest('hex').slice(0, 20); }
+  contactId(job) { return 'contact-' + createHash('sha256').update(job.account + '\0' + (job.account.startsWith('qq:')?qqDestination(job):job.user)).digest('hex').slice(0, 20); }
   rememberContact(job) {
     const p = JSON.parse(job.payload); if ((!p.context && p.channel !== 'qq') || !job.user || job.kind === 'alarm' || job.kind === 'test') return;
     const id = this.contactId(job);
-    this.db.prepare('INSERT INTO contacts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET job=excluded.job,updated=excluded.updated WHERE excluded.updated>=contacts.updated').run(id, job.account, job.user, job.id, job.created);
+    this.db.prepare('INSERT INTO contacts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET job=excluded.job,updated=excluded.updated WHERE excluded.updated>=contacts.updated').run(id, job.account, job.account.startsWith('qq:')?qqDestination(job):job.user, job.id, job.created);
   }
-  contacts() { return this.db.prepare("SELECT c.id,c.account,c.user,c.updated,p.nickname,p.remark FROM contacts c LEFT JOIN contact_profiles p ON p.channel='qq' AND p.peer=c.user AND c.account LIKE 'qq:%' ORDER BY c.updated DESC LIMIT 500").all().map(r => ({ ...r, channel: r.account.startsWith('qq:') ? 'qq' : 'weixin', ...this.addressBook.db.prepare('SELECT alias FROM address_book WHERE channel=? AND peer=?').get(r.account.startsWith('qq:') ? 'qq' : 'weixin', r.user) })); }
+  contacts() {
+    return this.db.prepare("SELECT c.id,c.account,c.user,c.updated,p.nickname,p.remark FROM contacts c LEFT JOIN contact_profiles p ON p.channel='qq' AND p.peer=c.user AND c.account LIKE 'qq:%' ORDER BY c.updated DESC LIMIT 500").all().map(r=>{
+      const channel=r.account.startsWith('qq:')?'qq':'weixin';
+      if(channel==='qq'&&r.user.startsWith('group:')){
+        const groupId=r.user.slice(6),known=this.channelSettings('qq-groups-known');
+        return {...r,channel,kind:'group',groupId,alias:known.account===r.account?known.groups?.find(g=>g.id===groupId)?.name??groupId:groupId};
+      }
+      return {...r,channel,kind:'private',...this.addressBook.db.prepare('SELECT alias FROM address_book WHERE channel=? AND peer=?').get(channel,r.user)};
+    });
+  }
   emit(session, call, text = '', image = null, recipient) {
     const c = this.context(session); if (!c) throw new BridgeError('outbound-context-required');
     const contact = c.kind === 'test' ? null : recipient
