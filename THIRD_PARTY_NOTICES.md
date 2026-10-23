@@ -314,3 +314,7 @@ The optional Windows gateway is the unmodified official NapNeko/NapCatQQ 4.18.41
 NapCat uses the **Limited Redistribution License for NapCat**, not this project's MIT license. Upstream restrictions, including non-commercial use and redistribution conditions, apply to that separate software. Consult the original license before use or redistribution: https://github.com/NapNeko/NapCatQQ/blob/main/LICENSE . This project does not relicense or modify the gateway.
 
 API interoperability was researched from upstream commit `3420f0b76d7dc0ac92cde1663f21ea27f61e13bb`; our supervisor and OneBot integration are independently implemented. The official reference qq-bridge uses SnowLuma; SnowLuma is not installed or redistributed by this project.
+
+## Private developer exchange package (v1.8.1)
+
+The optional friend edition includes the locally installed, unmodified NapCat 4.18.41 application and existing dependency binaries for private non-commercial development exchange. The source is https://github.com/NapNeko/NapCatQQ (copyright Mlikiowa); its complete Limited Redistribution License is included in docs/licenses/NapCat-LICENSE.txt. This edition does not relicense NapCat or bundled dependencies under MIT. Existing dependency license files are retained. Runtime credentials, signing keys and native account data are excluded. Standard source editions continue to omit runtime binaries.
