@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BridgeError } from './util.js';
 import { clean } from './cognitive/store.js';
+import { AddressBook } from './contacts.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 export const FLASH = { provider: 'deepseek-official', model: 'deepseek-flash', name: 'DeepSeek-V41-Flash' };
 export const RUNTIME_DEFAULTS = { reasoningEffort: 'high', maxTokens: 8192, continuous: true, paused: false, continueDelayMs: 1000 };
@@ -28,9 +29,12 @@ export class RuntimeStore {
     this.db.exec(`CREATE TABLE IF NOT EXISTS reply_routes(job TEXT PRIMARY KEY,session TEXT NOT NULL,request TEXT NOT NULL,start_seq INTEGER,closed INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS reply_candidates(job TEXT NOT NULL,seq INTEGER NOT NULL,text TEXT NOT NULL,PRIMARY KEY(job,seq));`);
     if (!this.db.prepare('PRAGMA table_info(reply_routes)').all().some(c => c.name === 'is_private')) this.db.exec('ALTER TABLE reply_routes ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
+    this.addressBook = new AddressBook(this.db);
   }
+  channelSettings(name, defaults = {}) { const row = this.db.prepare('SELECT v FROM settings WHERE k=?').get('channel:' + name); return { ...defaults, ...(row ? JSON.parse(row.v) : {}) }; }
+  saveChannelSettings(name, value) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run('channel:' + name, JSON.stringify(value)); return value; }
   close() { this.db.close(); }
-  settings() { return { ...RUNTIME_DEFAULTS, ...Object.fromEntries(this.db.prepare('SELECT * FROM settings').all().map(r => [r.k, JSON.parse(r.v)])), ...FLASH }; }
+  settings() { return { ...RUNTIME_DEFAULTS, ...Object.fromEntries(this.db.prepare("SELECT * FROM settings WHERE k NOT LIKE 'channel:%'").all().map(r => [r.k, JSON.parse(r.v)])), ...FLASH }; }
   configure(changes) {
     if (!changes || typeof changes !== 'object' || Array.isArray(changes) || Object.keys(changes).some(k => !Object.hasOwn(RUNTIME_DEFAULTS, k))) throw new BridgeError('runtime-settings-invalid');
     const s = { ...this.settings(), ...changes };
@@ -72,11 +76,11 @@ export class RuntimeStore {
   flag(session, field, value = 1) { if (!['rest', 'preempt'].includes(field)) throw new BridgeError('runtime-flag'); this.db.prepare(`UPDATE contexts SET ${field}=?,updated=? WHERE session=?`).run(value, Date.now(), session); }
   contactId(job) { return 'contact-' + createHash('sha256').update(job.account + '\0' + job.user).digest('hex').slice(0, 20); }
   rememberContact(job) {
-    const p = JSON.parse(job.payload); if (!p.context || !job.user || job.kind === 'alarm' || job.kind === 'test') return;
+    const p = JSON.parse(job.payload); if ((!p.context && p.channel !== 'qq') || !job.user || job.kind === 'alarm' || job.kind === 'test') return;
     const id = this.contactId(job);
     this.db.prepare('INSERT INTO contacts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET job=excluded.job,updated=excluded.updated WHERE excluded.updated>=contacts.updated').run(id, job.account, job.user, job.id, job.created);
   }
-  contacts() { return this.db.prepare('SELECT id,user,updated FROM contacts ORDER BY updated DESC LIMIT 100').all(); }
+  contacts() { return this.db.prepare('SELECT id,account,user,updated FROM contacts ORDER BY updated DESC LIMIT 500').all().map(r => ({ ...r, channel: r.account.startsWith('qq:') ? 'qq' : 'weixin', ...this.addressBook.db.prepare('SELECT alias FROM address_book WHERE channel=? AND peer=?').get(r.account.startsWith('qq:') ? 'qq' : 'weixin', r.user) })); }
   emit(session, call, text = '', image = null, recipient) {
     const c = this.context(session); if (!c) throw new BridgeError('outbound-context-required');
     const contact = c.kind === 'test' ? null : recipient
@@ -87,6 +91,7 @@ export class RuntimeStore {
     if (typeof text !== 'string' || text.length > 16000 || clean(text, 16000) !== text || (!text.trim() && !image)) throw new BridgeError('outbound-invalid');
     if (image && !this.db.prepare('SELECT 1 FROM images WHERE id=?').get(image)) throw new BridgeError('image-not-found');
     if (image && c.kind === 'test') throw new BridgeError('test-image-library-isolated');
+    if (image && contact?.account.startsWith('qq:')) throw new BridgeError('qq-text-only');
     const id = session + ':' + c.job + ':' + call;
     this.db.prepare('INSERT OR IGNORE INTO emissions(id,session,job,text,image,created,delivery_job) VALUES(?,?,?,?,?,?,?)').run(id, session, c.job, text, image, Date.now(), contact?.job ?? null);
     return { id, state: 'queued', meaning: c.kind === 'test' ? '仅进入独立测试记录，不发送微信' : '持久排队，尚不代表微信已送达' };

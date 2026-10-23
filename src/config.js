@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BridgeError, requireLoopback } from './util.js';
 import { cognitiveConfig } from './cognitive/config.js';
+import { qqSettings } from './qq.js';
 
 export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', env = process.env) {
   let input = {};
@@ -32,6 +33,7 @@ export function loadConfig(file = process.env.BRIDGE_CONFIG ?? 'config.json', en
       allowApprovals: input.bridge?.allowApprovals ?? false },
     cognitive: cognitiveConfig(input.cognitive),
     interaction: { enabled: input.interaction?.enabled ?? true },
+    qq: qqSettings(input.qq),
     media: { enabled: input.media?.enabled ?? true, baseUrl: input.media?.baseUrl ?? 'https://novac2c.cdn.weixin.qq.com/c2c',
       allowedHosts: input.media?.allowedHosts ?? ['novac2c.cdn.weixin.qq.com'], maxBytes: input.media?.maxBytes ?? 8 * 1024 * 1024,
       maxImages: input.media?.maxImages ?? 4, timeoutMs: input.media?.timeoutMs ?? 20000 },

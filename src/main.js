@@ -81,13 +81,12 @@ async function main() {
       if (!ok) process.exitCode = 1; return;
     }
     if (command !== 'start') throw new BridgeError('command-unknown');
-    if (!c.weixin.enabled) throw new BridgeError('weixin-disabled');
     fs.mkdirSync(c.dsh.cwd, { recursive: true });
     // Verify DSH before asking the user to scan; no changes to its global configuration.
     await dsh.check(controller.signal);
-    const credentials = account ?? await doLogin(c, null);
-    if (!credentials.ownerId) throw new BridgeError('weixin-owner-missing');
-    unlockAccount = await accountLock(credentials.accountId);
+    const credentials = c.weixin.enabled ? account ?? await doLogin(c, null) : { accountId: 'local-console', ownerId: '' };
+    if (c.weixin.enabled && !credentials.ownerId) throw new BridgeError('weixin-owner-missing');
+    if (c.weixin.enabled) unlockAccount = await accountLock(credentials.accountId);
     const client = new IlinkClient(c.weixin, credentials);
     store = new Store(path.join(c.dataDir, 'bridge.sqlite'));
     log('bridge.started', { version: VERSION });

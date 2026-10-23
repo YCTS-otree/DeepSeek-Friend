@@ -5,8 +5,23 @@ import { randomUUID } from 'node:crypto';
 import { BridgeError } from './util.js';
 import { CognitiveStore } from './cognitive/store.js';
 import { forget } from './cognitive/privacy.js';
+import { qqSettings } from './qq.js';
+import { internetSettings, previewInternet } from './internet.js';
+import { loadCredentials, saveCredentials } from './security.js';
 
 export async function control({ store, runtime, config, engine }, action, args = {}) {
+  if (action === 'archive-list') { const location = path.resolve('Archive'); return { location, files: fs.existsSync(location) ? fs.readdirSync(location).filter(n => n.endsWith('.DSF')).map(name => ({ name, bytes: fs.statSync(path.join(location, name)).size })).sort((a,b) => b.name.localeCompare(a.name)) : [] }; }
+  if (action === 'contacts-list') return { entries: runtime.addressBook.list(), reachable: runtime.contacts() };
+  if (action === 'contacts-edit') return runtime.addressBook.edit(args);
+  if (action === 'channels-status') return { qq: engine?.qq?.status() ?? { settings: qqSettings(runtime.channelSettings('qq', config.qq)), state: 'bridge-stopped', tokenSaved: Boolean(loadCredentials(config.dataDir, 'qq-connection.json')?.token) }, internet: { ...internetSettings(runtime.channelSettings('internet')), agentVisible: false } };
+  if (action === 'qq-configure') {
+    const { token, ...changes } = args; const settings = qqSettings(changes);
+    if (token !== undefined) { if (typeof token !== 'string' || !/^[\x21-\x7e]{8,512}$/.test(token)) throw new BridgeError('qq-token-invalid'); saveCredentials(config.dataDir, { token }, 'qq-connection.json'); }
+    if (settings.enabled && !loadCredentials(config.dataDir, 'qq-connection.json')?.token) throw new BridgeError('qq-token-required');
+    runtime.saveChannelSettings('qq', settings); engine?.qq?.disconnect(); return { settings, tokenSaved: Boolean(loadCredentials(config.dataDir, 'qq-connection.json')?.token) };
+  }
+  if (action === 'internet-configure') return runtime.saveChannelSettings('internet', internetSettings(args));
+  if (action === 'internet-preview') return previewInternet(args.url, runtime.channelSettings('internet'));
   if (!runtime && ['runtime-status', 'runtime-configure', 'runtime-stop', 'runtime-wake', 'thoughts', 'prompts', 'alarms', 'alarm-create', 'alarm-cancel', 'test-send', 'test-clear'].includes(action)) throw new BridgeError('interaction-disabled');
   if (action === 'room-info') { const test = typeof args.session === 'string' && store.session(args.session)?.kind === 'test'; const location = path.join(config.dataDir, ...(test ? ['testing'] : []), 'cognitive', 'room'); return { location, exists: fs.existsSync(location) }; }
   if (action === 'runtime-status') return { settings: runtime.settings(), contexts: runtime.db.prepare('SELECT * FROM contexts ORDER BY updated DESC LIMIT 30').all(),

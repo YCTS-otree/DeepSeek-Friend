@@ -41,7 +41,7 @@ test('tool-less legacy declarations rebase once via the native request-series bo
   const agent = { id: 'legacy-session', session: { requestHeader: () => header, toolHistory: () => ({ tools, updates: [{ additions: [{ name: 'weixin_send_message' }] }] }) } };
   const hook = f.hooks.get('agent/pre-step');
   const rebased = await hook({ agent }, async () => decision); assert.equal(rebased.startsRequestSeries, true); assert.equal(rebased.messages, messages);
-  tools = [{ name: 'weixin_send_message' }]; assert.equal(await hook({ agent }, async () => decision), decision);
+  tools = [...f.tools.keys()].map(name => ({ name })); assert.equal(await hook({ agent }, async () => decision), decision);
   tools = [{ name: 'retired_tool' }]; assert.equal((await hook({ agent }, async () => decision)).startsRequestSeries, true);
   tools = []; header = undefined; assert.equal(await hook({ agent }, async () => decision), decision);
   header = {}; const rejected = { kind: 'reject' }; assert.equal(await hook({ agent }, async () => rejected), rejected);

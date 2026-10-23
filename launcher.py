@@ -280,7 +280,7 @@ class Controller:
             return self._sessions(action, args)
 
     def _sessions(self, action, args=None):
-        if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive", "room-info", "runtime-status", "runtime-configure", "runtime-stop", "runtime-wake", "thoughts", "prompts", "alarms", "alarm-create", "alarm-cancel", "test-send", "test-clear"} or (args is not None and not isinstance(args, dict)):
+        if not isinstance(action, str) or action not in {"list", "history", "create", "switch", "archive", "room-info", "runtime-status", "runtime-configure", "runtime-stop", "runtime-wake", "thoughts", "prompts", "alarms", "alarm-create", "alarm-cancel", "test-send", "test-clear", "contacts-list", "contacts-edit", "channels-status", "qq-configure", "internet-configure", "internet-preview", "archive-list"} or (args is not None and not isinstance(args, dict)):
             raise LauncherError("session-action-invalid")
         request_id = str(uuid.uuid4())
         pending = queue.Queue(maxsize=1)

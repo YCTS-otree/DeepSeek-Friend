@@ -117,7 +117,7 @@ function renderSessions() {
   $('history-title').textContent = selected ? selected.title : '暂无会话，首次微信消息会建立会话';
   $('switch-session').disabled = !selected?.archived;
   $('test-controls').hidden = selected?.kind !== 'test';
-  $('context-note').textContent = selected?.kind === 'test' ? '测试空间 · 不影响微信当前会话' : '查看不等于切换微信会话';
+  $('context-note').textContent = selected?.kind === 'test' ? '测试空间 · 不影响微信当前会话' : '微信与 QQ 共用当前正式会话';
   const picker = $('context-session'); picker.replaceChildren();
   for (const s of sessions) { const option = document.createElement('option'); option.value = s.session; option.textContent = (s.kind === 'test' ? '测试 · ' : '') + (s.archived ? '归档 · ' : '当前 · ') + s.title; picker.append(option); }
   picker.value = selectedSession ?? '';
@@ -128,7 +128,7 @@ function renderHistory() {
     const row = document.createElement('article'); row.className = 'chat-entry ' + entry.role;
     const head = document.createElement('div'); head.className = 'chat-entry-head';
     const who = entry.role === 'assistant' ? '小鲸鱼' : entry.role === 'bridge' ? '连接提示' : entry.actor.displayName || entry.actor.userId || '用户';
-    head.textContent = who + ' · ' + new Date(entry.created).toLocaleString();
+    head.textContent = who + (entry.role === 'user' && entry.actor.channel ? ' · ' + entry.actor.channel + ' / ' + entry.actor.userId + (entry.actor.trustedOwner ? ' · 可信 OTREE' : ' · 未认证为 OTREE') : '') + ' · ' + new Date(entry.created).toLocaleString();
     const body = document.createElement('p'); body.textContent = entry.text; row.append(head, body); el.append(row);
   }
 }
@@ -183,8 +183,8 @@ let currentPage = 'overview', settingsDirty = false, promptData = null, thoughtE
 function failNotice(id, e) { $(id).textContent = errors[e.message] ?? `操作未完成（${e.message}）`; }
 function route() {
   const name = typeof location === 'undefined' ? 'overview' : location.hash.slice(1);
-  currentPage = ['overview', 'sessions', 'controls', 'thoughts', 'identity'].includes(name) ? name : 'overview';
-  const titles = { overview: ['让微信，连上你的 Agent。', '启动服务，扫码授权，再回到微信开始对话。'], sessions: ['每段相遇，都有记录。', '正式会话归档保留；测试会话独立运行，可以清空。'], controls: ['给她自由，也保留掌控。', '切换思考深度，允许持续运行，或随时暂停与唤醒。'], thoughts: ['思考、安静和下一次醒来。', '查看本机私有记录，以及她为自己设置的小闹钟。'], identity: ['她的自我，和她的小房间。', '查看真实 Prompt 装配、历史 SYS 备份和持久空间。'] };
+  currentPage = ['overview', 'sessions', 'controls', 'thoughts', 'identity', 'channels', 'internet', 'archives'].includes(name) ? name : 'overview';
+  const titles = { channels: ['连接不同渠道，记住是谁。', '微信和 QQ 共用会话；备注与可信账号分开。'], internet: ['先过滤，再判断。', '互联网仅供操作者测试，默认关闭且不对 Agent 展示。'], archives: ['给连续的历史，留一份归档。', '校验、保存，以及出问题时的可控回滚。'], overview: ['让微信，连上你的 Agent。', '启动服务，扫码授权，再回到微信开始对话。'], sessions: ['每段相遇，都有记录。', '正式会话归档保留；测试会话独立运行，可以清空。'], controls: ['给她自由，也保留掌控。', '切换思考深度，允许持续运行，或随时暂停与唤醒。'], thoughts: ['思考、安静和下一次醒来。', '查看本机私有记录，以及她为自己设置的小闹钟。'], identity: ['她的自我，和她的小房间。', '查看真实 Prompt 装配、历史 SYS 备份和持久空间。'] };
   $('intro-title').textContent = titles[currentPage][0]; $('intro-description').textContent = titles[currentPage][1];
   for (const el of document.querySelectorAll('[data-page]')) el.hidden = el.dataset.page !== currentPage;
   for (const link of document.querySelectorAll('.console-nav a')) { const active = link.getAttribute('href') === '#' + currentPage; link.setAttribute('aria-current', active ? 'page' : 'false'); }
@@ -231,8 +231,8 @@ async function loadAlarms() {
 }
 async function refreshActivePanel() {
   if (!state?.csrf || panelLoading) return; panelLoading = true;
-  try { if (currentPage === 'controls') await loadRuntime(); if (currentPage === 'thoughts') { await loadThoughts(); await loadAlarms(); } if (currentPage === 'identity') await loadPrompts(); }
-  catch (e) { failNotice(currentPage === 'identity' ? 'prompt-notice' : currentPage === 'thoughts' ? 'mind-notice' : 'runtime-notice', e); }
+  try { if (currentPage === 'controls') await loadRuntime(); if (currentPage === 'thoughts') { await loadThoughts(); await loadAlarms(); } if (currentPage === 'identity') await loadPrompts(); if (['channels','internet'].includes(currentPage)) await loadChannels(); if (currentPage === 'archives') await loadArchives(); }
+  catch (e) { failNotice(['channels','internet','archives'].includes(currentPage) ? currentPage === 'channels' ? 'channels-notice' : currentPage === 'archives' ? 'archive-notice' : 'internet-notice' : currentPage === 'identity' ? 'prompt-notice' : currentPage === 'thoughts' ? 'mind-notice' : 'runtime-notice', e); }
   finally { panelLoading = false; }
 }
 $('context-session').addEventListener('change', async () => { selectSession($('context-session').value); renderSessions(); await loadHistory(); });
@@ -248,3 +248,19 @@ $('refresh-thoughts').addEventListener('click', () => refreshActivePanel()); $('
 $('alarm-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('alarm-create', { session: selectedSession, at: new Date($('alarm-at').value).toISOString(), note: $('alarm-note').value }); $('alarm-note').value = ''; $('mind-notice').textContent = '闹钟已保存。'; await loadAlarms(); } catch (err) { failNotice('mind-notice', err); } });
 if (typeof window !== 'undefined') { window.addEventListener('hashchange', route); route(); }
 setInterval(() => { if (!offline) void refreshActivePanel(); }, 5000);
+
+let channelDirty = false;
+async function loadChannels() {
+  const data = await sessionRequest('channels-status');
+  $('qq-status').textContent = '状态：' + data.qq.state + ' · 账号：' + (data.qq.account ?? '未连接') + ' · 好友：' + (data.qq.friends ?? 0) + ' · ' + (data.qq.tokenSaved ? 'Token 已安全保存' : '尚未保存 Token') + (data.qq.error ? ' · ' + data.qq.error : '');
+  if (!channelDirty) { $('qq-url').value = data.qq.settings.url; $('qq-enabled').checked = data.qq.settings.enabled; $('internet-enabled').checked = data.internet.enabled; $('internet-hosts').value = data.internet.allowedHosts.join(', '); }
+  const contacts = await sessionRequest('contacts-list'); $('contacts-list').replaceChildren();
+  for (const c of contacts.entries) { const row = document.createElement('div'); row.className = 'alarm-row'; const text = document.createElement('span'); text.textContent = c.channel + ' · ' + c.peer + ' · ' + c.alias + (c.trustedOwner ? ' · 代码核验为 OTREE' : ' · 备注不代表认证'); const edit = document.createElement('button'); edit.className = 'text-button'; edit.textContent = '编辑'; edit.addEventListener('click', () => { $('contact-channel').value = c.channel; $('contact-peer').value = c.peer; $('contact-alias').value = c.alias; $('contact-notes').value = c.notes; }); row.append(text, edit); $('contacts-list').append(row); }
+}
+for (const id of ['qq-form','internet-form']) $(id).addEventListener('input', () => { channelDirty = true; });
+$('qq-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('qq-configure', { enabled: $('qq-enabled').checked, url: $('qq-url').value, ...($('qq-token').value ? { token: $('qq-token').value } : {}) }); $('qq-token').value = ''; channelDirty = false; $('channels-notice').textContent = '已保存；服务运行时自动连接。'; await loadChannels(); } catch (err) { failNotice('channels-notice', err); } });
+$('contacts-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('contacts-edit', { channel: $('contact-channel').value, peer: $('contact-peer').value, alias: $('contact-alias').value, notes: $('contact-notes').value }); $('channels-notice').textContent = '备注已保存，后续消息按真实账号匹配。'; await loadChannels(); } catch (err) { failNotice('channels-notice', err); } });
+$('internet-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('internet-configure', { enabled: $('internet-enabled').checked, allowedHosts: $('internet-hosts').value.split(',').map(x => x.trim()).filter(Boolean) }); channelDirty = false; $('internet-notice').textContent = '边界已保存，Agent 仍没有互联网接口。'; await loadChannels(); } catch (err) { failNotice('internet-notice', err); } });
+$('internet-preview-form').addEventListener('submit', async e => { e.preventDefault(); $('internet-result').textContent = ''; try { const data = await sessionRequest('internet-preview', { url: $('internet-url').value }); $('internet-result').textContent = data.text; $('internet-notice').textContent = data.warning + ' 移除 ' + data.removedLines + ' 行。'; } catch (err) { failNotice('internet-notice', err); } });
+async function loadArchives() { const data = await sessionRequest('archive-list'); $('archive-list').replaceChildren(); for (const file of data.files) { const row = document.createElement('p'); row.className = 'chat-note'; row.textContent = file.name + ' · ' + Math.ceil(file.bytes / 1024) + ' KB'; $('archive-list').append(row); } $('archive-notice').textContent = data.location + (data.files.length ? '' : ' · 暂无归档'); }
+$('refresh-archives').addEventListener('click', () => { void loadArchives().catch(e => failNotice('archive-notice', e)); });

@@ -35,6 +35,16 @@ export class Store {
     // A crashed sender may have succeeded remotely. Never auto-replay this state.
     this.db.exec("UPDATE outbox SET state='unknown',error='process-interrupted' WHERE state='sending'; UPDATE pending SET state='stale' WHERE state IN ('pending','answering')");
   }
+  ingestQQ(account, user, messageId, text) {
+    return this.tx(() => {
+      const now = Date.now(), id = randomUUID();
+      const inserted = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, account, user, messageId, JSON.stringify({ channel: 'qq', text, supported: true }), randomUUID(), now, now);
+      if (!inserted.changes) return;
+      const sid = this.ensureMapping(account, user).session;
+      this.db.prepare('UPDATE jobs SET session=? WHERE id=?').run(sid, id);
+      this.chat('user:' + id, sid, 'user', { channel: 'qq', accountId: account, userId: user }, text, now, id);
+    });
+  }
   ingest(account, response, allowed, maxTextChars, { imagesEnabled = false, maxImages = 4 } = {}) {
     return this.tx(() => {
       for (const m of response.msgs ?? []) {
@@ -165,7 +175,8 @@ export class Store {
     const chars = Array.from(text); let part = 0;
     for (let start = 0; start < chars.length; start += maxChars) {
       const key = id + ':' + part++;
-      const body = textMessage(job.user, chars.slice(start, start + maxChars).join(''), p.context, 'dsfriend-' + createHash('sha256').update(key).digest('hex').slice(0, 40), p.runId);
+      const body = job.account.startsWith('qq:') ? { qq: { account: job.account, user: job.user, text: chars.slice(start, start + maxChars).join('') } }
+        : textMessage(job.user, chars.slice(start, start + maxChars).join(''), p.context, 'dsfriend-' + createHash('sha256').update(key).digest('hex').slice(0, 40), p.runId);
       this.db.prepare('INSERT OR IGNORE INTO outbox(id,account,user,body,created) VALUES(?,?,?,?,?)').run(key, job.account, job.user, JSON.stringify(body), Date.now());
     }
   }

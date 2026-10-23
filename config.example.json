@@ -57,5 +57,9 @@
     "maxBytes": 8388608,
     "maxImages": 4,
     "timeoutMs": 20000
+  },
+  "qq": {
+    "enabled": false,
+    "url": "ws://127.0.0.1:3001"
   }
 }
