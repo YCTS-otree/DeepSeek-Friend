@@ -42,6 +42,28 @@ class FakeController:
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_idle_recompression_preserves_manifest_restore_and_never_grows_archive(self):
+        import os, time, zipfile
+        # Use compressible fixture material, never production conversations.
+        room=self.data/'cognitive/room';room.mkdir(parents=True);(room/'sample.txt').write_text('repeated sample line\n'*40000)
+        archive=dsf.snapshot(self.root,self.data);original=dsf.inspect(archive);size=archive.stat().st_size
+        os.utime(archive,(time.time()-90000,time.time()-90000))
+        with patch.object(self.m,'idle',return_value=True):self.assertTrue(self.m.compress_one())
+        self.assertEqual(dsf.inspect(archive),original);self.assertLessEqual(archive.stat().st_size,size)
+        self.assertFalse(list(self.m.folder.glob('*.compressing')))
+        dsf.restore(archive,self.root,self.data)
+        self.assertEqual((room/'sample.txt').read_text(),'repeated sample line\n'*40000)
+
+    def test_compression_skips_fresh_archives_and_interruption_preserves_original(self):
+        import os,time
+        original=self.archive.read_bytes()
+        with patch.object(self.m,'idle',return_value=True):self.assertFalse(self.m.compress_one())
+        os.utime(self.archive,(time.time()-90000,time.time()-90000))
+        with patch.object(self.m,'idle',side_effect=[True,False]):
+            with self.assertRaises(ArchiveError):self.m.compress_one()
+        self.assertEqual(self.archive.read_bytes(),original);self.assertIsNone(self.m.compressing)
+        self.assertFalse(list(self.m.folder.glob('*.compressing')))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name); self.data = self.root / 'data'; self.data.mkdir()

@@ -15,6 +15,13 @@ function page() {
   vm.runInContext(fs.readFileSync('web/app.js', 'utf8') + '\nstate = {csrf:"fixture"};', context);
   return { context, get, run: code => vm.runInContext(code, context), respond: fn => { context.fetch = async (_url, request) => ({ ok: true, json: async () => fn(JSON.parse(request.body)) }); } };
 }
+test('archive relative ages show minutes, hours and combined days with stable invalid/future handling',()=>{
+ const p=page();const now=Date.parse('2026-10-24T12:00:00Z');p.context.ageNow=now;
+ assert.equal(p.run('archiveAge(new Date(ageNow-60000).toISOString(),ageNow)'),'1分钟前');
+ assert.equal(p.run('archiveAge(new Date(ageNow-3600000).toISOString(),ageNow)'),'1小时前');
+ assert.equal(p.run('archiveAge(new Date(ageNow-90000000).toISOString(),ageNow)'),'1天1小时前');
+ assert.equal(p.run('archiveAge("bad",ageNow)'),'时间未知');
+});
 
 test('group management shows escaped names, persists only the selected switch and disables offline changes',async()=>{
  const p=page(),requests=[];let enabled=false;

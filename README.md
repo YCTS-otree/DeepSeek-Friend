@@ -1,6 +1,6 @@
 # DeepSeek:Friend
 
-**v1.9.0 · 微信 / QQ ↔ DeepSeek Harness 桥接器与持续认知扩展。Windows 优先。**
+**v1.10.0 · 微信 / QQ ↔ DeepSeek Harness 桥接器与持续认知扩展。Windows 优先。**
 
 DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注、持续记忆、受控 Self 演化和本机控制台；推理、工具执行、MCP 和原生上下文管理交给项目独立的 DSH。当前前台模型为 **DeepSeek-V41-Flash（4.1 Flash）**。
 

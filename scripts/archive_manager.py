@@ -3,8 +3,11 @@ import json
 import re
 import secrets
 import time
+import threading
+import sqlite3
 import zipfile
 from pathlib import Path
+from datetime import datetime, timezone
 from scripts import dsf
 
 
@@ -20,6 +23,92 @@ class ArchiveManager:
         self.clock = clock
         self.plan = None
         self.operations = {}
+        self.compressing = None
+        self.compression_attempts = set()
+        self.compression_stop = threading.Event()
+        self.compression_yield = threading.Event()
+        self.compression_thread = None
+
+    def start_idle_compression(self):
+        self.compression_thread = threading.Thread(target=self._compression_loop, name='dsf-compression', daemon=True)
+        self.compression_thread.start()
+
+    def close(self):
+        self.compression_stop.set()
+        if self.compression_thread:
+            self.compression_thread.join()
+
+    def idle(self):
+        if self.c.closed or self.c.state['busy'] or self.plan or self.compression_stop.is_set() or self.compression_yield.is_set():
+            return False
+        data, _ = dsf.settings(self.root)
+        file = data / 'bridge.sqlite'
+        if not file.exists():
+            return True
+        db = sqlite3.connect(file.as_uri() + '?mode=ro', uri=True, timeout=.1)
+        try:
+            active = db.execute("SELECT 1 FROM jobs WHERE state IN ('queued','backoff','submitting','waiting','review') LIMIT 1").fetchone()
+            latest = db.execute('SELECT MAX(updated) FROM jobs').fetchone()[0]
+            return not active and (latest is None or time.time() * 1000 - latest >= 300000)
+        finally:
+            db.close()
+
+    def _compression_loop(self):
+        while not self.compression_stop.wait(60):
+            try:
+                self.compress_one()
+            except Exception:
+                self.c._log('launcher.archive-compression-deferred')
+
+    def compress_one(self):
+        """One worker, one old immutable archive; never touch live model state."""
+        with self.c.lock:
+            if self.compressing:
+                return False
+            self.compression_yield.clear()
+            if not self.idle():
+                return False
+            candidates = []
+            for file in self.folder.glob('*.DSF'):
+                try:
+                    file = self.path(file.name)
+                    stat = file.stat(); stamp = (file.name, stat.st_size, stat.st_mtime_ns)
+                    if time.time() - stat.st_mtime >= 86400 and stamp not in self.compression_attempts:
+                        candidates.append((stat.st_mtime, file, stamp))
+                except (ValueError, ArchiveError, OSError):
+                    continue
+            if not candidates:
+                return False
+            _, file, stamp = min(candidates)
+            self.compressing = file.name
+        temp = file.with_name(file.name + '.' + secrets.token_hex(8) + '.compressing')
+        try:
+            original = dsf.inspect(file)
+            with zipfile.ZipFile(file) as src:
+                if all(i.compress_type == zipfile.ZIP_LZMA for i in src.infolist()):
+                    self.compression_attempts.add(stamp); return False
+                with zipfile.ZipFile(temp, 'x', compression=zipfile.ZIP_LZMA) as dst:
+                    for info in src.infolist():
+                        with src.open(info) as incoming, dst.open(info.filename, 'w', force_zip64=True) as outgoing:
+                            while True:
+                                block = incoming.read(1024 * 1024)
+                                if not block: break
+                                if not self.idle(): raise ArchiveError('dsf-compression-interrupted')
+                                outgoing.write(block)
+            if dsf.inspect(temp) != original:
+                raise ArchiveError('dsf-compression-verification-failed')
+            with self.c.lock:
+                current = file.stat()
+                if not self.idle() or (file.name,current.st_size,current.st_mtime_ns) != stamp:
+                    raise ArchiveError('dsf-compression-interrupted')
+                if temp.stat().st_size < current.st_size:
+                    temp.replace(file)
+                    self.c._log('launcher.archive-compressed')
+            self.compression_attempts.add(stamp)
+            return True
+        finally:
+            temp.unlink(missing_ok=True)
+            self.compressing = None
 
     def path(self, name, trash=False):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,160}\.DSF', name):
@@ -49,7 +138,7 @@ class ArchiveManager:
         except Exception:
             if verify:
                 raise ArchiveError('dsf-verification-failed') from None
-            return {'name': file.name, 'bytes': file.stat().st_size, 'invalid': True, 'compatible': False}
+            return {'name': file.name, 'bytes': file.stat().st_size, 'createdAt': datetime.fromtimestamp(file.stat().st_mtime, timezone.utc).isoformat(), 'invalid': True, 'compatible': False}
 
     def catalog(self):
         p = self.folder / 'catalog.json'
@@ -65,7 +154,7 @@ class ArchiveManager:
     def list(self):
         labels = self.catalog()
         latest = next(reversed(self.operations.values()), None) if self.operations else None
-        result = {'location': str(self.folder), 'files': [], 'trash': [], 'operation': {k:v for k,v in latest.copy().items() if k != 'args'} if latest else None}
+        result = {'location': str(self.folder), 'files': [], 'trash': [], 'compressing': self.compressing, 'operation': {k:v for k,v in latest.copy().items() if k != 'args'} if latest else None}
         for key, folder in [('files', self.folder), ('trash', self.folder / 'Trash')]:
             dsf.check_target(self.root, folder)
             if folder.exists():
@@ -78,7 +167,9 @@ class ArchiveManager:
         return result
 
     def _idle(self):
-        if self.c.closed or self.c.state['busy']:
+        if self.compressing:
+            self.compression_yield.set()
+        if self.c.closed or self.c.state['busy'] or self.compressing:
             raise ArchiveError('dsf-maintenance-busy')
 
     def command(self, action, args):

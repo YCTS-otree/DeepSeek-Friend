@@ -59,6 +59,7 @@ class Controller:
         self.archives = ArchiveManager(self)
         self.worker = threading.Thread(target=self._work, daemon=True)
         self.worker.start()
+        self.archives.start_idle_compression()
 
     def snapshot(self):
         with self.lock:
@@ -407,6 +408,7 @@ class Controller:
             self.state["error"] = None
 
     def close(self):
+        self.archives.close()
         with self.lock:
             archive_running = any(op['state'] == 'running' for op in self.archives.operations.values())
             self.closed = True

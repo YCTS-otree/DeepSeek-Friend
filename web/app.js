@@ -319,6 +319,12 @@ $('contacts-form').addEventListener('submit', async e => { e.preventDefault(); t
 $('internet-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('internet-configure', { enabled: $('internet-enabled').checked, allowedHosts: $('internet-hosts').value.split(',').map(x => x.trim()).filter(Boolean) }); channelDirty = false; $('internet-notice').textContent = '边界已保存，Agent 仍没有互联网接口。'; await loadChannels(); } catch (err) { failNotice('internet-notice', err); } });
 $('internet-preview-form').addEventListener('submit', async e => { e.preventDefault(); $('internet-result').textContent = ''; try { const data = await sessionRequest('internet-preview', { url: $('internet-url').value }); $('internet-result').textContent = data.text; $('internet-notice').textContent = data.warning + ' 移除 ' + data.removedLines + ' 行。'; } catch (err) { failNotice('internet-notice', err); } });
 let archivePlan=null,archiveReadyAt=0,archiveConfirmPending=false;
+function archiveAge(value,now=Date.now()){
+  const stamp=Date.parse(value);if(!Number.isFinite(stamp))return '时间未知';
+  const minutes=Math.floor(Math.max(0,now-stamp)/60000);if(minutes<1)return '刚刚';
+  const days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60);
+  return days?days+'天'+(hours?hours+'小时':'')+'前':hours?hours+'小时'+(minutes%60?minutes%60+'分钟':'')+'前':minutes+'分钟前';
+}
 const archiveRequest=(action,args={})=>post('/api/archives',{action,args});
 async function waitArchiveOperation(id){
   for(;;){const op=await archiveRequest('status',{id});$('archive-operation').textContent=op.progress+(op.result?.archive?' · '+op.result.archive:'')+(op.result?.beforeArchive?' · 回滚前归档：'+op.result.beforeArchive:'');
@@ -342,7 +348,7 @@ async function loadArchives() {
   const data=await archiveRequest('list');$('archive-list').replaceChildren();$('archive-trash').replaceChildren();
   function button(label,handler){const b=document.createElement('button');b.type='button';b.className='text-button';b.textContent=label;b.addEventListener('click',async()=>{b.disabled=true;try{await handler();}catch(e){failNotice('archive-notice',e);}finally{b.disabled=false;}});return b;}
   for(const [key,target] of [['files','archive-list'],['trash','archive-trash']])for(const file of data[key]){
-    const row=document.createElement('div');row.className='archive-entry';const title=document.createElement('p');title.className='chat-note';title.textContent=(file.label?file.label+' · ':'')+file.name+' · '+Math.ceil(file.bytes/1024)+' KB · '+(file.invalid?'文件损坏或格式异常':file.appVersion+' · '+file.createdAt+' · '+file.reason+(file.compatible?'':' · 需对应版本恢复'));
+    const row=document.createElement('div');row.className='archive-entry';const title=document.createElement('p');title.className='chat-note';title.textContent=(file.label?file.label+' · ':'')+file.name+' · '+Math.ceil(file.bytes/1024)+' KB · '+archiveAge(file.createdAt)+'（'+new Date(file.createdAt).toLocaleString()+'） · '+(file.invalid?'文件损坏或格式异常':file.appVersion+' · '+file.reason+(file.compatible?'':' · 需对应版本恢复'));
     const actions=document.createElement('div');actions.className='archive-actions';row.append(title,actions);
     if(key==='trash')actions.append(button('还原备份',async()=>{await archiveRequest('untrash',{name:file.name});await loadArchives();}));
     else{
@@ -353,7 +359,8 @@ async function loadArchives() {
     $(target).append(row);
   }
   $('archive-notice').textContent=data.location+(data.files.length?'':' · 暂无归档');
-  if(data.operation)$('archive-operation').textContent=data.operation.progress+(data.operation.error?' · '+data.operation.error:'')+(data.operation.result?.beforeArchive?' · 回滚前归档：'+data.operation.result.beforeArchive:'');
+  if(data.compressing)$('archive-operation').textContent='空闲单线程压缩：'+data.compressing;
+  else if(data.operation)$('archive-operation').textContent=data.operation.progress+(data.operation.error?' · '+data.operation.error:'')+(data.operation.result?.beforeArchive?' · 回滚前归档：'+data.operation.result.beforeArchive:'');
 }
 setInterval(archiveCountdown,100);
 $('archive-create').addEventListener('click',async()=>{$('archive-create').disabled=true;try{const op=await archiveRequest('create');await waitArchiveOperation(op.archiveOperation);await loadArchives();}catch(e){failNotice('archive-notice',e);}finally{$('archive-create').disabled=false;}});
