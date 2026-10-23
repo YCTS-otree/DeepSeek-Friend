@@ -14,7 +14,8 @@ import { publicIPv4, internetSettings, previewInternet, filterDocument } from '.
 import { AddressBook } from '../src/contacts.js';
 import { control } from '../src/controls.js';
 import { installInteraction } from '../dsh/interaction.js';
-import { QQMedia } from '../src/qq-media.js';
+import { QQMedia, qqImageUrl } from '../src/qq-media.js';
+import { BridgeError } from '../src/util.js';
 import { FakeDsh, account, incoming, turn } from './helpers.js';
 
 async function until(predicate) { for (let n=0;n<200;n++) { if (predicate()) return; await new Promise(r=>setTimeout(r,10)); } throw Error('mock-qq-timeout'); }
@@ -114,4 +115,29 @@ test('QQ account changes hide previous account favorites and reject their opaque
   const f=await fixture(t);await f.engine.qqMedia.refresh();const favorite=f.engine.runtime.qqFavorites()[0];assert.ok(favorite);
   f.engine.runtime.saveChannelSettings('qq-live',{account:'qq:11112222'});assert.equal(f.engine.runtime.qqFavorites().length,0);
   await assert.rejects(f.engine.runtime.favoriteImage('synthetic-session',favorite.id),{code:'qq-sticker-not-found'});
+});
+
+test('bad QQ image is rejected before Agent admission and later split messages continue in the same Session',async t=>{
+  const f=await fixture(t);const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64');
+  f.engine.qqMedia.download=async value=>{qqImageUrl(value);return png;};
+  f.send(3626097226,'bad',{message_id:'bad-image',message:[{type:'text',data:{text:'bad'}},{type:'image',data:{url:'https://untrusted.example/bad.png'}}]});
+  f.send(3626097226,'next text',{message_id:'next-text'});
+  f.send(3626097226,'image only',{message_id:'next-image',message:[{type:'image',data:{url:'https://multimedia.nt.qq.com.cn/download?fileid=SYNTHETIC'}}]});
+  await until(()=>f.store.db.prepare('SELECT count(*) n FROM jobs').get().n===3);
+  const job=id=>f.store.db.prepare('SELECT * FROM jobs WHERE message_id=?').get(id);
+  await f.engine.tick();await f.engine.drain();assert.equal(job('bad-image').state,'done');assert.equal(job('bad-image').error,'qq-image-host');assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,0);assert.equal(f.store.active(job('bad-image').session),undefined);
+  await f.engine.tick();await f.engine.drain();const text=job('next-text');assert.equal(text.state,'waiting');assert.equal(text.session,job('bad-image').session);
+  for(const frame of turn(text.request_id,'response',1,0))await f.engine.onSession(text.session,frame);
+  await f.engine.tick();await f.engine.drain();const image=job('next-image');assert.equal(image.state,'waiting');assert.equal(image.session,text.session);
+  const calls=f.dsh.calls.filter(c=>c.endpoint==='session/prompt');assert.equal(calls.length,2);assert.equal(calls[1].args.content[1].type,'image');assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/create').length,1);
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM outbox WHERE id LIKE 'media-error:%'").get().n,1);
+});
+
+test('QQ image preparation success never releases a Session after ambiguous DSH admission failure',async t=>{
+  const f=await fixture(t);f.engine.qqMedia.download=async()=>Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64');
+  const rpc=f.dsh.rpc.bind(f.dsh);f.dsh.rpc=async(endpoint,args)=>{const result=await rpc(endpoint,args);if(endpoint==='session/prompt')throw new BridgeError('dsh-protocol','',{ambiguous:true});return result;};
+  f.send(3626097226,'',{message_id:'uncertain-image',message:[{type:'image',data:{url:'https://multimedia.nt.qq.com.cn/download?fileid=SYNTHETIC'}}]});f.send(3626097226,'later',{message_id:'blocked-later'});
+  await until(()=>f.store.db.prepare('SELECT count(*) n FROM jobs').get().n===2);await f.engine.tick();await f.engine.drain();
+  const first=f.store.db.prepare("SELECT * FROM jobs WHERE message_id='uncertain-image'").get();assert.equal(first.state,'review');assert.equal(first.error,'dsh-protocol');
+  await f.engine.tick();await f.engine.drain();assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,1);assert.equal(f.store.db.prepare("SELECT state FROM jobs WHERE message_id='blocked-later'").get().state,'queued');
 });

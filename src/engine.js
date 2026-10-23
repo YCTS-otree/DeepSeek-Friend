@@ -167,6 +167,7 @@ export class Engine {
       this.store.db.prepare('UPDATE chat_entries SET actor=? WHERE id=?').run(JSON.stringify(payload.actor ?? { accountId: saved.account, userId: saved.user, displayName: saved.user }), 'user:' + job.id);
       return payload.dshText;
     });
+    let preparingImages = false;
     try {
       if (this.explicit) {
         this.runtime.rememberContact(job);
@@ -175,10 +176,12 @@ export class Engine {
       this.cognition(session)?.bind(job, session);
       let savedPayload = JSON.parse(this.store.job(job.id).payload);
       if (savedPayload.images?.length && !savedPayload.imageParts) {
+        preparingImages = true;
         if (!this.media) throw new BridgeError('media-disabled');
         const parts = []; for (const item of savedPayload.images) { const image = savedPayload.channel==='qq' ? await this.qqMedia.receive(item) : await this.media.receive(item, this.signal); parts.push({ type: 'image', mediaType: image.mediaType, data: image.data, name: image.id }); }
         savedPayload.imageParts = parts;
         this.store.db.prepare('UPDATE jobs SET payload=? WHERE id=?').run(JSON.stringify(savedPayload), job.id);
+        preparingImages = false;
       }
       const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(session).digest('hex').slice(0, 32));
       fs.mkdirSync(cwd, { recursive: true });
@@ -197,6 +200,16 @@ export class Engine {
     } catch (e) {
       const current = this.store.job(job.id);
       if (current.state === 'done') return;
+      if (preparingImages) {
+        // No DSH prompt/RPC admission has occurred: a bad image must not lock the shared Session.
+        const code = /^[a-z][a-z0-9-]{0,63}$/.test(e.code ?? '') ? e.code : 'image-preparation';
+        this.store.updateJob(job.id, 'done', code);
+        this.runtime?.db.prepare('UPDATE reply_routes SET closed=1,is_private=1 WHERE job=?').run(job.id);
+        this.runtime?.flag(session, 'rest');
+        this.cognition(session)?.idle(session);
+        this.store.reply(job, '图片处理失败（' + code + '），本条尚未提交给 DSH。后续消息可以继续处理。', 'media-error:' + job.id);
+        return;
+      }
       // Persisted requestId + explicit session identity make a later admission retry bounded to the same request.
       if (e.retryable) this.store.updateJob(job.id, 'submitting', e.code, Date.now() + backoff(job.attempts));
       else { this.store.updateJob(job.id, 'review', e.code ?? 'dsh-submit'); this.cognition(session)?.idle(session); this.store.reply(job, 'DSH 暂未接受或确认此消息。请在本地检查状态；不会自动创建替代会话。', 'submit-error:' + job.id); }

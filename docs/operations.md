@@ -104,3 +104,7 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 
 - `qq-gateway-account-in-use`：原生登录明确报告账号已在桌面 QQ 登录；只退出机器人账号的桌面登录后刷新二维码，其他账号可继续使用。
 - `qq-gateway-onebot-config`：QQ 已登录，正在重试配置消息通道；不再把这个后续错误显示为未登录。
+
+## v1.6.3 QQ 图片队列
+
+`qq-image-host` 表示图片地址未通过精确域名校验。官方 NT QQ CDN 已补齐 multimedia.nt.qq.com.cn；新失败会明确提示图片处理未提交 DSH，并允许后续消息继续。下载断流/超时会结束，不永久挂起。已有 review 需核对是否已经被 DSH 接受后受控恢复，不能批量重放或重建 Session。详见 [修复记录](incident-qq-image-queue.md)。

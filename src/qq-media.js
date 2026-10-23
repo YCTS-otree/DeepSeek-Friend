@@ -6,24 +6,27 @@ import { publicIPv4 } from './internet.js';
 import { BridgeError } from './util.js';
 import { clean } from './cognitive/store.js';
 
-const hosts = new Set(['multimedia.nt.qq.com','gchat.qpic.cn','c2cpicdw.qpic.cn','p.qpic.cn','qpic.cn','pic.qpic.cn','imgcache.qq.com','gxh.vip.qq.com']);
+const hosts = new Set(['multimedia.nt.qq.com.cn','multimedia.nt.qq.com','gchat.qpic.cn','c2cpicdw.qpic.cn','p.qpic.cn','qpic.cn','pic.qpic.cn','imgcache.qq.com','gxh.vip.qq.com']);
 export function qqImageUrl(value) {
   let u; try { u = new URL(value); } catch { throw new BridgeError('qq-image-url'); }
   if (u.protocol !== 'https:' || u.username || u.password || u.port || u.hash || !hosts.has(u.hostname)) throw new BridgeError('qq-image-host');
   return u;
 }
-export async function qqImageBytes(value, signal, { resolve = lookup, request = https.request, maxBytes = 8*1024*1024 } = {}) {
+export async function qqImageBytes(value, signal, { resolve = lookup, request = https.request, maxBytes = 8*1024*1024, timeoutMs = 10000 } = {}) {
   const u=qqImageUrl(value);let timer;
   const addresses=await Promise.race([resolve(u.hostname,{all:true,family:4}),new Promise((_r,reject)=>{timer=setTimeout(()=>reject(new BridgeError('qq-image-dns-timeout')),2000);})]).finally(()=>clearTimeout(timer));
   if (!addresses.length || addresses.some(a=>!publicIPv4(a.address))) throw new BridgeError('qq-image-address');
   return new Promise((resolveResult,reject)=>{
     const req=request(u,{agent:false,signal,lookup:(_h,o,cb)=>cb(null,...(o.all?[[{address:addresses[0].address,family:4}]]:[addresses[0].address,4]))},res=>{
       if(res.statusCode!==200 || Number(res.headers['content-length'])>maxBytes){res.destroy();reject(new BridgeError('qq-image-response'));return;}
-      const chunks=[];let size=0;
+      const chunks=[];let size=0,ended=false;
       res.on('data',b=>{size+=b.length;if(size>maxBytes){res.destroy();reject(new BridgeError('qq-image-size'));}else chunks.push(b);});
-      res.on('error',()=>reject(new BridgeError('qq-image-network')));res.on('end',()=>resolveResult(Buffer.concat(chunks)));
+      res.on('error',()=>reject(new BridgeError('qq-image-network')));
+      res.on('aborted',()=>reject(new BridgeError('qq-image-network')));
+      res.on('close',()=>{if(!ended)reject(new BridgeError('qq-image-network'));});
+      res.on('end',()=>{ended=true;resolveResult(Buffer.concat(chunks));});
     });
-    const timer=setTimeout(()=>req.destroy(),10000);req.once('close',()=>clearTimeout(timer));req.on('error',()=>reject(new BridgeError('qq-image-network')));req.end();
+    const timer=setTimeout(()=>{req.destroy();reject(new BridgeError('qq-image-timeout'));},timeoutMs);req.once('close',()=>clearTimeout(timer));req.on('error',()=>reject(new BridgeError('qq-image-network')));req.end();
   });
 }
 export class QQMedia {
