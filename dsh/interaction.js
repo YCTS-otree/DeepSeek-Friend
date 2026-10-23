@@ -14,7 +14,17 @@ export function installInteraction(ctx, runtime) {
   ctx.on('agent/pre-step', async (p, next) => {
     const c = runtime.context(p.agent?.id);
     if (c && runtime.settings().paused) return { kind: 'reject' };
-    return next();
+    const decision = await next();
+    const session = p.agent?.session, history = session?.toolHistory?.();
+    // DSH's addition-only projection defers every tool added after an empty baseline.
+    // DeepSeek requires an eager tool. Rebase declarations through the native boundary;
+    // the Session, messages, permissions and raw historical events remain intact.
+    if (decision.kind === 'enter' && session?.requestHeader?.() && history) {
+      const active = ctx.tools.schemas(p.agent), names = new Set(active.map(tool => tool.name));
+      const eager = history.tools.some(tool => tool.deferLoading !== true && names.has(tool.name));
+      if (!eager && active.some(tool => tool.deferLoading !== true)) return { ...decision, startsRequestSeries: true };
+    }
+    return decision;
   });
   ctx.on('agent/turn-stopping', async ({ agent, signal }) => {
     const c = runtime.context(agent?.id), s = runtime.settings();

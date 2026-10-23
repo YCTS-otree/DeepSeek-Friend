@@ -21,13 +21,13 @@ function redPng() {
   const pixels = Buffer.alloc(64 * (96 * 3 + 1)); for (let y = 0; y < 64; y++) for (let x = 0; x < 96; x++) pixels[y * 289 + 1 + x * 3] = 255;
   return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
-test('REAL Flash: native vision, multiple messages in one turn, private thought capture and continuation',
+test('REAL Flash: upgrade a tool-less legacy session, vision, multiple messages, private thoughts and continuation',
   { skip: process.env.RUN_COGNITIVE_LIVE !== '1', timeout: 180000 }, async () => {
     const c = loadConfig(process.env.COGNITIVE_LIVE_CONFIG);
     if (!c.dataDir.includes('.research') || new URL(c.dsh.baseUrl).port !== '3098') throw Error('isolated-test-required');
     const credential = loadCredentials(c.dataDir, 'dsh-connection.json'), client = new DshClient({ ...c.dsh, cookie: credential.cookie });
     const ac = new AbortController(), runtime = new RuntimeStore(c.dataDir), cognitive = new CognitiveStore(path.join(c.dataDir, 'testing/cognitive'), c.cognitive);
-    const session = 'interaction-live-' + randomUUID(), scope = cognitive.scope(); cognitive.bind(scope, session, '隔离协议验收', 'conversation', { displayName: 'OTREE（合成测试）' });
+    const session = 'interaction-legacy-live-' + randomUUID(), scope = cognitive.scope(); cognitive.bind(scope, session, '隔离协议验收', 'conversation', { displayName: 'OTREE（合成测试）' });
     runtime.configure({ continuous: false, reasoningEffort: 'off', maxTokens: 1024, continueDelayMs: 0 });
     let running;
     async function run(text, images = [], continuation = false) {

@@ -1,6 +1,6 @@
 # 兼容性边界
 
-记录日期：2026-10-22；Bridge：1.4.0。
+记录日期：2026-10-23；Bridge：1.4.1。
 
 | 对象 | 依据 | 状态 |
 | --- | --- | --- |
@@ -52,3 +52,5 @@ DSH Cookie 仍代表本机操作者，没有在此版本验证过仅会话级专
 权限限制改在具体 `agent/created` 上应用：DSH 0.2 会把 Preset standing scope 工具视为具体 Agent 的继承项，在父级 `allow:[]` 会误隐藏项目自身工具。新实现只允许当时注册且位于 SAFE_TOOLS 内的工具，并保留单调执行 guard；未知宿主/Shell/MCP 工具仍拒绝。
 
 腾讯图片 CDN/AES/getuploadurl 字段基于本轮实际官方源码和 Mock。主动联系已经用户授权，但 API 的任意联系人、上下文有效时长、client_id 去重均无新增保证；发送必须复用已有授权联系人的真实入站凭据。详细源码提交、角色、迁移和未验证范围见 [interaction-v14.md](interaction-v14.md)。
+
+v1.4.1 对旧空工具基线使用原生 agent/pre-step / startsRequestSeries 重建模型工具声明基线；DSH Session 与历史保持原样，避免 addition-only 投影导致全部工具延迟加载而被服务端拒绝。已先用真实 Flash 复现，再验证修复，详见 [incident-tool-loading.md](incident-tool-loading.md)。

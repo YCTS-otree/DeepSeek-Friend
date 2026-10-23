@@ -174,7 +174,7 @@ export class Store {
     return { jobs: this.db.prepare('SELECT state,count(*) AS count FROM jobs GROUP BY state').all(),
       quarantine: this.db.prepare('SELECT reason,count(*) AS count FROM quarantine GROUP BY reason').all(),
       outbox: this.db.prepare('SELECT state,count(*) AS count FROM outbox GROUP BY state').all(),
-      issues: this.db.prepare("SELECT id,state,error FROM jobs WHERE state IN ('review','backoff') ORDER BY created").all(),
+      issues: this.db.prepare("SELECT id,state,error FROM jobs WHERE state IN ('review','backoff') OR (state='done' AND error LIKE 'dsh-%') ORDER BY created").all(),
       unknown: this.db.prepare("SELECT id,state,error FROM outbox WHERE state IN ('unknown','failed') ORDER BY created").all() };
   }
 }

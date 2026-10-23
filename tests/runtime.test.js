@@ -20,7 +20,7 @@ function fixture(t, cognitive = false) {
   const engine = new Engine(c, store, dsh, ilink, account, ac.signal), runtime = engine.runtime;
   t.after(async () => { ac.abort(); await engine.drain(); await engine.cognitive?.close(); await engine.testCognitive?.close(); runtime.close(); store.close(); });
   const hooks = new Map(), tools = new Map();
-  installInteraction({ systemPrompt: { section() {} }, on: (n, f) => hooks.set(n, f), tools: { register: s => tools.set(s.name, s) } }, runtime);
+  installInteraction({ systemPrompt: { section() {} }, on: (n, f) => hooks.set(n, f), tools: { register: s => tools.set(s.name, s), schemas: () => [...tools.values()] } }, runtime);
   return { dir, config: c, store, dsh, engine, runtime, hooks, tools, sent, signal: ac.signal,
     ingest: (...msgs) => store.ingest(account.accountId, { msgs }, new Set(['alice', 'bob']), 16000, { imagesEnabled: true }),
     job: id => store.db.prepare('SELECT * FROM jobs WHERE message_id=?').get(id),
@@ -33,6 +33,18 @@ test('runtime pins actual Flash route and hot-applies depth and per-request cap 
   assert.throws(() => f.runtime.configure({ maxSteps: 1 }), { code: 'runtime-settings-invalid' });
   assert.throws(() => f.runtime.configure({ reasoningEffort: 'ultra' }));
   const reopened = new RuntimeStore(f.dir); try { assert.equal(reopened.settings().reasoningEffort, 'max'); } finally { reopened.close(); }
+});
+
+test('tool-less legacy declarations rebase once via the native request-series boundary without replacing messages', async t => {
+  const f = fixture(t), messages = [{ role: 'user', content: 'retained' }], decision = { kind: 'enter', messages };
+  let tools = [], header = {};
+  const agent = { id: 'legacy-session', session: { requestHeader: () => header, toolHistory: () => ({ tools, updates: [{ additions: [{ name: 'weixin_send_message' }] }] }) } };
+  const hook = f.hooks.get('agent/pre-step');
+  const rebased = await hook({ agent }, async () => decision); assert.equal(rebased.startsRequestSeries, true); assert.equal(rebased.messages, messages);
+  tools = [{ name: 'weixin_send_message' }]; assert.equal(await hook({ agent }, async () => decision), decision);
+  tools = [{ name: 'retired_tool' }]; assert.equal((await hook({ agent }, async () => decision)).startsRequestSeries, true);
+  tools = []; header = undefined; assert.equal(await hook({ agent }, async () => decision), decision);
+  header = {}; const rejected = { kind: 'reject' }; assert.equal(await hook({ agent }, async () => rejected), rejected);
 });
 test('one turn can emit several durable messages while private notes/reasoning never enter Weixin', async t => {
   const f = fixture(t); f.ingest(incoming('hello', 'a')); await f.engine.submit(f.job('a')); const j = f.job('a');
@@ -49,6 +61,16 @@ test('one turn can emit several durable messages while private notes/reasoning n
   const thoughts = f.runtime.thoughts(j.session).entries;
   assert.ok(thoughts.some(r => r.kind === 'reasoning' && r.text.includes('SECRET-THOUGHT')));
   assert.ok(thoughts.some(r => r.kind === 'note' && r.text === 'PRIVATE-NOTE'));
+});
+
+test('failed model turns retain a safe code in status after completion without exposing provider messages', async t => {
+  const f = fixture(t); f.ingest(incoming('failure', 'failure')); await f.engine.submit(f.job('failure')); const j = f.job('failure');
+  const records = turn(j.request_id); records.at(-1).event.data.reason = { kind: 'error', error: { code: 'INVALID_REQUEST', message: 'PRIVATE-PROVIDER-DETAIL' } };
+  for (const record of records) await f.engine.onSession(j.session, record);
+  assert.equal(f.job('failure').state, 'done'); assert.equal(f.job('failure').error, 'dsh-agent-INVALID_REQUEST');
+  assert.equal(f.store.stats().issues[0].error, 'dsh-agent-INVALID_REQUEST');
+  assert.ok(!JSON.stringify(f.store.stats()).includes('PRIVATE-PROVIDER'));
+  const status = await f.control('runtime-status'); assert.equal(status.jobs[0].error, 'dsh-agent-INVALID_REQUEST');
 });
 test('native stopping hook continues without a step/token counter; rest and new input preemption both stop continuation', async t => {
   const f = fixture(t); f.runtime.configure({ continueDelayMs: 0 });

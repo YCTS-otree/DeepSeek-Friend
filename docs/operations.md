@@ -85,3 +85,7 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 主动联系已获得用户授权，但有效 context_token 仍由腾讯决定。服务端明确拒绝进入 failed；结果不明进入 unknown，按原流程核对，不换消息 ID 自动重发。图片上传回执与最终消息分开持久化。
 
 正式思考记录在 data/interaction.sqlite，只从认证控制台读取；不要将数据库或包含私有思考的截图公开。测试清理停止测试 Agent 并清空应用测试记录/记忆，保留历史 Self 原稿、测试房间文件与上游 DSH 原始运行日志，不声称物理擦除。完整说明见 [interaction-v14.md](interaction-v14.md)。
+
+## v1.4.1 旧会话工具加载
+
+若出现 DSH Agent 异常且模型返回 INVALID_REQUEST、at least one tool must have defer_loading=false，升级至 v1.4.1 并重启项目实例。补丁通过原生 request series 兼容旧空工具基线，原 Session 和消息保持保留。当前实例已应用，不必新建会话。完整复现与验证见 [incident-tool-loading.md](incident-tool-loading.md)。

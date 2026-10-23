@@ -16,10 +16,13 @@ secureDirectory(base); const home=path.join(base,'home'); fs.mkdirSync(home); co
 const config={ dataDir,dsh:{baseUrl:'http://127.0.0.1:3098',cwd:path.join(base,'workspaces')},cognitive:{outputTokenBudget:1800,workerTimeoutMs:90000} };
 fs.mkdirSync(config.dsh.cwd); const configFile=path.join(base,'config.json'); fs.writeFileSync(configFile,JSON.stringify(config));
 const budgetPlugin=path.join(base,'budget.mjs'); fs.writeFileSync(budgetPlugin,"export function apply(ctx){ctx.on('agent/request',async(_p,next)=>({...await next(),maxTokens:500,reasoningEffort:'off'}));}");
+const legacyPlugin=path.join(base,'legacy-header.mjs');
+fs.writeFileSync(legacyPlugin,"export function apply(ctx){ctx.on('agent/created',({agent})=>{if(agent.id.startsWith('interaction-legacy-live-')&&!agent.session.requestHeader())agent.session.append('request/header',{header:{config:{provider:'deepseek-official',model:'deepseek-flash'}},reason:'initial'});});}");
 const overlay=path.join(base,'patch.yml');
 fs.writeFileSync(overlay,fs.readFileSync('dsh/weixin.patch.yml','utf8')
  .replaceAll('__WEIXIN_POLICY__',JSON.stringify(pathToFileURL(path.join(root,'dsh/weixin-policy.js')).href))
  .replaceAll('__COGNITIVE_PLUGIN__',JSON.stringify(pathToFileURL(path.join(root,'dsh/cognitive.js')).href))
+ .replaceAll('          - id: questions','          - id: live-legacy-fixture\n            name: '+JSON.stringify(pathToFileURL(legacyPlugin).href)+'\n          - id: questions')
  .replace('          - id: questions','          - id: live-budget\n            name: '+JSON.stringify(pathToFileURL(budgetPlugin).href)+'\n          - id: questions'));
 const env={...apiKeyEnvironment(root).env,DSH_HOME:home,DS_FRIEND_COGNITIVE:JSON.stringify({dir:path.join(dataDir,'cognitive'),config:{...config.cognitive,provider:'deepseek-official',model:'deepseek-flash'}})};
 delete env.DSH_COOKIE;delete env.DSH_LAUNCH_TOKEN;delete env.DSH_WEB_URL;

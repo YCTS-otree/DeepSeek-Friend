@@ -11,7 +11,8 @@ export function publicEvent(event) {
   const d = event.data ?? {};
   switch (event.type) {
     case 'turn/start': return { turn: d.turn };
-    case 'turn/end': return { turn: d.turn, reason: { kind: d.reason?.kind } };
+    case 'turn/end': return { turn: d.turn, reason: { kind: d.reason?.kind,
+      ...(/^[A-Z][A-Z0-9_]{0,63}$/.test(d.reason?.error?.code ?? '') ? { error: { code: d.reason.error.code } } : {}) } };
     case 'user/message': return { source: { kind: d.source?.kind, rpcId: d.source?.rpcId } };
     case 'assistant/message': return { turn: d.turn, text: (d.message?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n') };
     case 'tool/call': return { turn: d.turn, callId: d.callId, name: d.name, arguments: d.arguments };
@@ -129,7 +130,8 @@ export class Engine {
     if (!text) text = 'DSH 已结束本轮，未产生可发送的文本。';
     if (!this.explicit) this.store.reply(job, text, 'result:' + job.id, this.config.bridge.maxReplyChars);
     else text = this.runtime.db.prepare('SELECT text,image FROM emissions WHERE job=? ORDER BY created,rowid').all(job.id).map(e => e.image ? '[图片 ' + e.image + ']' : e.text).join('\n\n');
-    this.store.updateJob(job.id, 'done');
+    const failure = reason === 'completed' ? null : end.data.reason?.error?.code ? 'dsh-agent-' + end.data.reason.error.code : 'dsh-turn-' + (['aborted', 'blocked', 'interrupted', 'error', 'failed'].includes(reason) ? reason : 'unknown');
+    this.store.updateJob(job.id, 'done', failure);
     this.runtime?.flag(sid, 'rest');
     if (this.cognition(sid)) {
       try { this.cognition(sid).completed(this.store.job(job.id), text, reason); }

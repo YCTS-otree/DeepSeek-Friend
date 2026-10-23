@@ -10,7 +10,7 @@ export async function control({ store, runtime, config, engine }, action, args =
   if (!runtime && ['runtime-status', 'runtime-configure', 'runtime-stop', 'runtime-wake', 'thoughts', 'prompts', 'alarms', 'alarm-create', 'alarm-cancel', 'test-send', 'test-clear'].includes(action)) throw new BridgeError('interaction-disabled');
   if (action === 'room-info') { const test = typeof args.session === 'string' && store.session(args.session)?.kind === 'test'; const location = path.join(config.dataDir, ...(test ? ['testing'] : []), 'cognitive', 'room'); return { location, exists: fs.existsSync(location) }; }
   if (action === 'runtime-status') return { settings: runtime.settings(), contexts: runtime.db.prepare('SELECT * FROM contexts ORDER BY updated DESC LIMIT 30').all(),
-    jobs: store.db.prepare("SELECT id,session,state,kind,error FROM jobs WHERE state IN ('queued','submitting','waiting','review') ORDER BY created LIMIT 30").all(),
+    jobs: store.db.prepare("SELECT id,session,state,kind,error FROM jobs WHERE state IN ('queued','submitting','waiting','review') OR (state='done' AND error LIKE 'dsh-%') ORDER BY created DESC LIMIT 30").all(),
     deliveries: store.db.prepare('SELECT id,state,error FROM outbox ORDER BY created DESC,rowid DESC LIMIT 30').all() };
   if (action === 'runtime-configure') return { settings: runtime.configure(args) };
   if (action === 'thoughts') return runtime.thoughts(args.session, args.before);

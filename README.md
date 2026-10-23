@@ -1,8 +1,10 @@
 # DeepSeek:Friend · 微信 ↔ DSH Bridge
 
-版本 **1.4.0**。通过腾讯官方 iLink 接收微信文本和图片，由独立 DSH 内的 **DeepSeek-V41-Flash** 处理。支持一轮多条消息、持续思考、本机思考记录、小闹钟和已授权联系人的主动消息。
+版本 **1.4.1**。通过腾讯官方 iLink 接收微信文本和图片，由独立 DSH 内的 **DeepSeek-V41-Flash** 处理。支持一轮多条消息、持续思考、本机思考记录、小闹钟和已授权联系人的主动消息。
 
 **DSH 是唯一 Agent Runtime。** Bridge 不调用独立 LLM API，不执行模型工具，不实现 MCP 调度，不依赖 OpenClaw 主程序。默认只接受扫码者；其他用户必须由本地配置明确加入白名单。
+
+v1.4.1 修复旧会话升级后“工具全部延迟加载”导致的 Agent 异常，原会话无需重建。原因、回归与当前部署见 [修复记录](docs/incident-tool-loading.md)。
 
 ## Cognitive v3：统一自我与持续记忆
 
@@ -186,7 +188,7 @@ Remove-Item Env:RUN_DSH_PROTOCOL
 
 **真实微信 A–E 场景仍需扫码账号验收。** 已用用户提供的 API Key 通过独立 DSH Session 完成一次真实模型响应验证；这不等于微信端到端通过。完整结果见 [测试报告](docs/testing.md)；接口与兼容边界见 [调研记录](docs/research.md) 和 [兼容性](docs/compatibility.md)。
 
-生成发布源代码包：`npm run release`，输出 `Release/v1.4.0/`，已存在的版本目录拒绝覆盖。
+生成发布源代码包：`npm run release`，输出 `Release/v1.4.1/`，已存在的版本目录拒绝覆盖。
 
 ## 限制与扩展
 
