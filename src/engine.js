@@ -8,6 +8,7 @@ import { MediaClient } from './media.js';
 import { QQChannel } from './qq.js';
 import { OWNER_QQ } from './contacts.js';
 import { QQMedia } from './qq-media.js';
+import { expandForward } from './qq-forward.js';
 
 export const isCommand = text => /^\/(?:approve|deny|answer|cancel|reset|status)(?:\s|$)/.test(text.trim());
 export function publicEvent(event) {
@@ -167,22 +168,29 @@ export class Engine {
       this.store.db.prepare('UPDATE chat_entries SET actor=? WHERE id=?').run(JSON.stringify(payload.actor ?? { accountId: saved.account, userId: saved.user, displayName: saved.user }), 'user:' + job.id);
       return payload.dshText;
     });
-    let preparingImages = false;
+    let preparingImages = null;
     try {
       if (this.explicit) {
         this.runtime.rememberContact(job);
         this.runtime.bind(session, job.id, this.store.session(session)?.kind === 'test' ? 'test' : job.kind === 'alarm' ? 'alarm' : 'conversation', job.kind === 'alarm' ? null : this.runtime.contactId(job), job.kind === 'alarm' ? null : job.request_id);
       }
-      this.cognition(session)?.bind(this.store.job(job.id), session);
       let savedPayload = JSON.parse(this.store.job(job.id).payload);
+      if(savedPayload.forwards?.length && !savedPayload.forwardText){
+        preparingImages='聊天记录';
+        const expanded=await expandForward(savedPayload.forwards,(_action,args)=>this.qq.readForward(args.id,job.user),{maxChars:Math.max(256,this.config.bridge.maxTextChars-savedPayload.text.length-256),maxImages:this.config.media.enabled?Math.max(0,this.config.media.maxImages-(savedPayload.images?.length??0)):0});
+        savedPayload.forwardText=expanded.text;savedPayload.text+='\n'+expanded.text;savedPayload.images=[...savedPayload.images??[],...expanded.images];
+        this.store.tx(()=>{this.store.db.prepare('UPDATE jobs SET payload=? WHERE id=?').run(JSON.stringify(savedPayload),job.id);this.store.db.prepare('UPDATE chat_entries SET text=? WHERE id=?').run(savedPayload.text,'user:'+job.id);});
+        preparingImages=null;
+      }
       if (savedPayload.images?.length && !savedPayload.imageParts) {
-        preparingImages = true;
+        preparingImages = '图片';
         if (!this.media) throw new BridgeError('media-disabled');
         const parts = []; for (const item of savedPayload.images) { const image = savedPayload.channel==='qq' ? await this.qqMedia.receive(item) : await this.media.receive(item, this.signal); parts.push({ type: 'image', mediaType: image.mediaType, data: image.data, name: image.id }); }
         savedPayload.imageParts = parts;
         this.store.db.prepare('UPDATE jobs SET payload=? WHERE id=?').run(JSON.stringify(savedPayload), job.id);
-        preparingImages = false;
+        preparingImages = null;
       }
+      this.cognition(session)?.bind(this.store.job(job.id), session);
       const cwd = path.join(this.config.dsh.cwd, createHash('sha256').update(session).digest('hex').slice(0, 32));
       fs.mkdirSync(cwd, { recursive: true });
       if (this.store.get('dsh-created:' + session)) {
@@ -194,7 +202,7 @@ export class Engine {
       }
       this.dsh.follow(session);
       await this.dsh.rpc('session/prompt', { sessionId: session, requestId: job.request_id, mode: 'queue',
-        content: [{ type: 'text', text: text + (savedPayload.imageParts?.length ? '\n【本机图片库 ID】' + savedPayload.imageParts.map(p => p.name).join(', ') : '') }, ...savedPayload.imageParts ?? []], clientTimeZone: 'Asia/Shanghai' }, this.signal);
+        content: [{ type: 'text', text: text + (savedPayload.forwardText?'\n'+savedPayload.forwardText:'') + (savedPayload.imageParts?.length ? '\n【本机图片库 ID】' + savedPayload.imageParts.map(p => p.name).join(', ') : '') }, ...savedPayload.imageParts ?? []], clientTimeZone: 'Asia/Shanghai' }, this.signal);
       // A very fast Agent may have already completed while the RPC acknowledgement travelled.
       if (this.store.job(job.id).state === 'submitting') this.store.updateJob(job.id, 'waiting');
     } catch (e) {
@@ -207,7 +215,7 @@ export class Engine {
         this.runtime?.db.prepare('UPDATE reply_routes SET closed=1,is_private=1 WHERE job=?').run(job.id);
         this.runtime?.flag(session, 'rest');
         this.cognition(session)?.idle(session);
-        this.store.reply(job, '图片处理失败（' + code + '），本条尚未提交给 DSH。后续消息可以继续处理。', 'media-error:' + job.id);
+        this.store.reply(job, preparingImages+'处理失败（' + code + '）'+(e.detail?'：'+e.detail.slice(0,300):'')+'，本条尚未提交给 DSH。后续消息可以继续处理。', 'media-error:' + job.id);
         return;
       }
       // Persisted requestId + explicit session identity make a later admission retry bounded to the same request.

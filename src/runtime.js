@@ -75,6 +75,8 @@ export class RuntimeStore {
   prepareReply(session, request) {
     const c = this.context(session); if (!c) throw new BridgeError('outbound-context-required');
     this.db.prepare('INSERT OR IGNORE INTO reply_routes(job,session,request) VALUES(?,?,?)').run(c.job, session, request);
+    // Preparation may fail before DSH admits anything. Only that untouched route can reopen.
+    this.db.prepare('UPDATE reply_routes SET closed=0,is_private=0 WHERE job=? AND request=? AND start_seq IS NULL AND NOT EXISTS(SELECT 1 FROM emissions WHERE job=?)').run(c.job, request, c.job);
   }
   finishReply(session) {
     const c = this.context(session); if (!c) return;

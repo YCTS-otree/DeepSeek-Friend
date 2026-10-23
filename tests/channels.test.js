@@ -25,7 +25,7 @@ async function fixture(t) {
   const store=new Store(path.join(dir,'bridge.sqlite')), dsh=new FakeDsh(), ac=new AbortController(), wx=[], actions=[];
   const engine=new Engine(config,store,dsh,{send:async b=>{wx.push(b);return{};}},account,ac.signal);
   const server=new WebSocketServer({host:'127.0.0.1',port:0}); await new Promise(r=>server.once('listening',r)); let socket,dropSend=false;
-  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(m.action==='send_private_msg'&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:m.action==='fetch_custom_face_detail'?[{resId:'fixture-favorite',url:'https://gchat.qpic.cn/fixture.png',desc:'合成图片'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
+  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(m.action==='send_private_msg'&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:m.action==='get_forward_msg'?{messages:[{type:'node',data:{nickname:'OTREE',user_id:3626097226,message:[{type:'text',data:{text:'FORWARD_FIXTURE_TEXT'}},{type:'image',data:{url:'https://gchat.qpic.cn/fixture.png'}},{type:'video',data:{url:'https://example.invalid/no-download'}}]}}]}:m.action==='fetch_custom_face_detail'?[{resId:'fixture-favorite',url:'https://gchat.qpic.cn/fixture.png',desc:'合成图片'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
   engine.qq.credentials=()=>({token:'MOCK_ONLY_TOKEN'}); engine.runtime.saveChannelSettings('qq',{enabled:true,url:'ws://127.0.0.1:'+server.address().port});
   const running=engine.qq.run(); await until(()=>engine.qq.state==='connected');
   t.after(async()=>{ac.abort();await running;await engine.drain();for(const s of server.clients)s.terminate();await new Promise(r=>server.close(r));engine.runtime.close();store.close();});
@@ -156,4 +156,24 @@ test('QQ display precedence uses address-book alias then friend remark then nick
   book.observeQQ(user,{nickname:'OTREE',remark:'好友备注'});assert.equal(book.actor(job,account).displayName,'好友备注');assert.equal(book.actor(job,account).trustedOwner,false);
   book.edit({channel:'qq',peer:user,alias:'通讯录备注'});const actor=book.actor(job,account);assert.equal(actor.displayName,'通讯录备注');assert.equal(actor.nickname,'OTREE');assert.equal(actor.remark,'好友备注');assert.equal(actor.trustedOwner,false);
   book.observeQQ('77665544',{nickname:'只有昵称'});assert.equal(book.actor({account:job.account,user:'77665544'},account).displayName,'只有昵称');
+});
+
+test('QQ forward is durably admitted, resolves text/native images, keeps the real sender and retries the same prepared snapshot',async t=>{
+ const f=await fixture(t);f.engine.qqMedia.download=async()=>Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64');
+ const message={message_id:'forward-durable',message:[{type:'forward',data:{id:'fixture'}}]};f.send(3326487557,'',message);f.send(3326487557,'',message);await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());
+ const j=f.store.db.prepare('SELECT * FROM jobs').get();const rpc=f.dsh.rpc.bind(f.dsh);let first=true;f.dsh.rpc=async(endpoint,args)=>{const result=await rpc(endpoint,args);if(endpoint==='session/prompt'&&first){first=false;throw new BridgeError('dsh-network','',{retryable:true});}return result;};
+ await f.engine.submit(j);await f.engine.submit(f.store.job(j.id));const prompts=f.dsh.calls.filter(c=>c.endpoint==='session/prompt');assert.equal(prompts.length,2);assert.deepEqual(prompts[0].args,prompts[1].args);assert.equal(prompts[0].args.content[1].type,'image');assert.match(prompts[0].args.content[0].text,/FORWARD_FIXTURE_TEXT/);assert.match(prompts[0].args.content[0].text,/未认证/);
+ assert.equal(JSON.parse(f.store.job(j.id).payload).actor.trustedOwner,false);assert.equal(f.actions.filter(c=>c.action==='get_forward_msg').length,1);assert.equal(f.store.db.prepare('SELECT count(*) n FROM jobs').get().n,1);
+});
+test('forward lookup failure gives a clear pre-admission notice and allows the next message through',async t=>{
+ const f=await fixture(t);const rpc=f.engine.qq.rpc.bind(f.engine.qq);f.engine.qq.rpc=async(action,args)=>{if(action==='get_forward_msg')throw new BridgeError('qq-timeout');return rpc(action,args);};
+ f.send(3626097226,'',{message_id:'forward-failed',message:[{type:'forward',data:{id:'fixture'}}]});f.send(3626097226,'next',{message_id:'forward-next'});await until(()=>f.store.db.prepare('SELECT count(*) n FROM jobs').get().n===2);
+ await f.engine.tick();await f.engine.drain();assert.equal(f.store.db.prepare("SELECT state FROM jobs WHERE message_id='forward-failed'").get().state,'done');await f.engine.tick();await f.engine.drain();assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,1);
+ assert.match(f.store.db.prepare("SELECT text FROM chat_entries WHERE role='bridge'").get().text,/聊天记录处理失败/);
+});
+
+test('numeric NapCat forward lookup restores only the requesting sender recent ID mapping after restart',async t=>{
+ const f=await fixture(t),calls=[];let attempts=0;f.engine.qq.rpc=async(action,args)=>{calls.push({action,args});if(action==='get_forward_msg'){if(++attempts===1)throw new BridgeError('qq-action-rejected');return{messages:[]};}return{messages:[{user_id:3626097226,message:[{type:'forward',data:{id:'123456'}}]}]};};
+ assert.deepEqual(await f.engine.qq.readForward('123456','3626097226'),{messages:[]});assert.equal(attempts,2);assert.equal(calls[1].args.user_id,'3626097226');assert.equal(calls[1].args.count,20);
+ f.engine.qq.rpc=async(action)=>{if(action==='get_forward_msg')throw new BridgeError('qq-action-rejected');return{messages:[{user_id:3326487557,message:[{type:'forward',data:{id:'123456'}}]}]};};await assert.rejects(f.engine.qq.readForward('123456','3626097226'),{code:'qq-action-rejected'});
 });

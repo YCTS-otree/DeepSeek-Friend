@@ -6,7 +6,7 @@ export const GATEWAY = { version: '4.18.41', webPort: 6101, wsPort: 3001,
   url: 'https://github.com/NapNeko/NapCatQQ/releases/download/v4.18.41/NapCat.Shell.Windows.Node.zip',
   sha256: '51fbb10e7bcd56b0c2a6de86c37811e7518330e48a137ac689ab1e4d8627d3f0' };
 export function oneBotConfiguration(token) {
-  return { network: { httpServers: [], httpSseServers: [], httpClients: [], websocketClients: [], plugins: [],
+  return { parseMultMsg:true, network: { httpServers: [], httpSseServers: [], httpClients: [], websocketClients: [], plugins: [],
     websocketServers: [{ name: 'DeepSeekFriend', enable: true, host: '127.0.0.1', port: GATEWAY.wsPort, messagePostFormat: 'array', reportSelfMessage: false, token, enableForcePushEvent: true, debug: false, heartInterval: 30000 }] } };
 }
 export function gatewayErrorDetail(value) {

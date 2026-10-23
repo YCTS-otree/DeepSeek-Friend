@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { BridgeError, sleep, backoff } from './util.js';
 import { loadCredentials } from './security.js';
 import { qqId } from './contacts.js';
+import { forwardId } from './qq-forward.js';
+import { gatewayErrorDetail } from './qq-gateway.js';
 
 export function qqSettings(value = {}) {
   if (Object.keys(value).some(k => !['enabled','url'].includes(k))) throw new BridgeError('qq-config-invalid');
@@ -22,7 +24,7 @@ export class QQChannel {
     if (this.ws?.readyState !== WebSocket.OPEN) throw new BridgeError('qq-disconnected', '', { retryable: true });
     const echo = randomUUID(), ambiguous = ['send_private_msg','add_custom_face'].includes(action);
     return new Promise((resolve, reject) => {
-      const fail = code => reject(Object.assign(new BridgeError(code), { ambiguous, retryable: !ambiguous }));
+      const fail = (code,detail) => reject(Object.assign(new BridgeError(code), { ambiguous, retryable: !ambiguous, detail }));
       const timer = setTimeout(() => { this.pending.delete(echo); fail('qq-timeout'); }, 6000);
       this.pending.set(echo, { resolve, reject: fail, timer });
       this.ws.send(JSON.stringify({ action, params, echo }), err => { if (err) { clearTimeout(timer); this.pending.delete(echo); fail('qq-disconnected'); } });
@@ -32,18 +34,19 @@ export class QQChannel {
     let e; try { e = JSON.parse(raw); } catch { return; }
     if (e.echo && this.pending.has(e.echo)) {
       const p = this.pending.get(e.echo); this.pending.delete(e.echo); clearTimeout(p.timer);
-      if (e.status === 'ok' && e.retcode === 0) p.resolve(e.data); else p.reject('qq-action-rejected');
+      if (e.status === 'ok' && e.retcode === 0) p.resolve(e.data); else p.reject('qq-action-rejected',gatewayErrorDetail(e.message??e.wording??''));
       return;
     }
     const user = qqId(e.user_id), message = qqId(e.self_id);
     if (this.state !== 'connected' || e.post_type !== 'message' || e.message_type !== 'private' || !user || 'qq:' + message !== this.account || !this.friends.has(user)
       || !['string','number'].includes(typeof e.message_id) || !String(e.message_id) || !Array.isArray(e.message)) return;
-    if (e.message.some(s => !(s.type === 'text' && typeof s.data?.text === 'string') && !(this.config.media.enabled && s.type === 'image' && typeof s.data?.url === 'string'))) return;
+    if (e.message.some(s => !(s.type === 'text' && typeof s.data?.text === 'string') && !(this.config.media.enabled && s.type === 'image' && typeof s.data?.url === 'string') && !(s.type==='forward' && forwardId(s.data?.id??s.data?.res_id??s.data?.forward_id)) && s.type!=='video')) return;
+    const forwards=e.message.filter(s=>s.type==='forward');
     const images=e.message.filter(s=>s.type==='image').map(s=>({url:s.data.url}));if(images.length>this.config.media.maxImages)return;
-    const text = e.message.filter(s=>s.type==='text').map(s => s.data.text).join('') || (images.length?'[QQ图片 × '+images.length+']':''); if (!text.trim() || text.length > this.config.bridge.maxTextChars) return;
+    const text = e.message.filter(s=>s.type==='text').map(s => s.data.text).join('') || (forwards.length?'[QQ转发聊天记录]':images.length?'[QQ图片 × '+images.length+']':'[视频已跳过]'); if (!text.trim() || text.length > this.config.bridge.maxTextChars) return;
     this.runtime.addressBook.observeQQ(user,{nickname:e.sender?.nickname});
     const actor=this.runtime.addressBook.actor({account:this.account,user},{});
-    this.store.ingestQQ(this.account, user, String(e.message_id), text, images, actor);
+    this.store.ingestQQ(this.account, user, String(e.message_id), text, images, actor, forwards);
     const job = this.store.db.prepare('SELECT * FROM jobs WHERE account=? AND user=? AND message_id=?').get(this.account, user, String(e.message_id));
     if (job) { this.runtime.rememberContact(job); if (this.store.active(job.session)) this.runtime.flag(job.session, 'preempt'); }
   }
@@ -56,6 +59,17 @@ export class QQChannel {
     for (const user of this.friends) {
       const id = this.runtime.contactId({ account: this.account, user });
       this.runtime.db.prepare('INSERT INTO contacts VALUES(?,?,?,?,?)').run(id, this.account, user, 'qq-contact:' + this.account + ':' + user, Date.now());
+    }
+  }
+  async readForward(id,user,{refreshed=false}={}) {
+    try{return await this.rpc('get_forward_msg',{id});}
+    catch(e){
+      if(e.code!=='qq-action-rejected'||refreshed||!/^\d{1,30}$/.test(id))throw e;
+      // NapCat numeric IDs rely on a process-local map. Rebuild only from this sender's recent records.
+      const history=await this.rpc('get_friend_msg_history',{user_id:user,count:20,parse_mult_msg:false});
+      const found=history?.messages?.some(m=>String(m.user_id)===user&&Array.isArray(m.message)&&m.message.some(s=>s.type==='forward'&&String(s.data?.id)===id));
+      if(!found)throw e;
+      return this.rpc('get_forward_msg',{id});
     }
   }
   async connect(c) {

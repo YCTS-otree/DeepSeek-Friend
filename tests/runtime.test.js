@@ -72,6 +72,19 @@ test('failed model turns retain a safe code in status after completion without e
   assert.ok(!JSON.stringify(f.store.stats()).includes('PRIVATE-PROVIDER'));
   const status = await f.control('runtime-status'); assert.equal(status.jobs[0].error, 'dsh-agent-INVALID_REQUEST');
 });
+test('pre-admission failure can reopen its route; admitted private routes never reopen', async t => {
+  const f=fixture(t);f.ingest(incoming('hello','reopen'));await f.engine.submit(f.job('reopen'));const j=f.job('reopen');
+  f.runtime.db.prepare('UPDATE reply_routes SET closed=1,is_private=1 WHERE job=?').run(j.id);
+  f.runtime.prepareReply(j.session,j.request_id);
+  assert.equal(f.runtime.db.prepare('SELECT closed FROM reply_routes WHERE job=?').get(j.id).closed,0);
+  for(const frame of turn(j.request_id,'恢复后的正常回复'))await f.engine.onSession(j.session,frame);
+  await f.engine.flushEmissions();while(await f.engine.sendOne()){}
+  assert.equal(f.sent.length,1);
+  f.runtime.db.prepare('UPDATE reply_routes SET is_private=1 WHERE job=?').run(j.id);
+  f.runtime.prepareReply(j.session,j.request_id);
+  assert.deepEqual({...f.runtime.db.prepare('SELECT closed,is_private FROM reply_routes WHERE job=?').get(j.id)},{closed:1,is_private:1});
+});
+
 test('ordinary response reaches Weixin once, retains both sides of chat and never sends reasoning', async t => {
   const f = fixture(t); f.ingest(incoming('hello', 'normal')); await f.engine.submit(f.job('normal')); const j = f.job('normal');
   for (const frame of turn(j.request_id, '正常回复')) await f.engine.onSession(j.session, frame);
