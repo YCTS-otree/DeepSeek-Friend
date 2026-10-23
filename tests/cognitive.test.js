@@ -366,3 +366,8 @@ test('restart restores active turns before idle scheduling and asynchronously im
   await f.s.backfill(bridge);
   assert.ok(f.s.active.has(map.session)); assert.equal(f.store.binding(map.session).query, '正在进行的新任务');
 });
+
+test('legacy cognitive sender fallback recognizes QQ owners and never labels QQ as Weixin',()=>{
+  const actor=CognitiveService.prototype.actor.call({account:{accountId:'wx-bot',ownerId:'wx-owner'}},{account:'qq:99990000',user:'3626097226',payload:'{}'});
+  assert.equal(actor.channel,'qq');assert.equal(actor.displayName,'OTREE');assert.equal(actor.trustedOwner,true);assert.equal(actor.sourceLabel,'QQ消息 · OTREE');
+});

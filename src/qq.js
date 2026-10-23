@@ -41,7 +41,9 @@ export class QQChannel {
     if (e.message.some(s => !(s.type === 'text' && typeof s.data?.text === 'string') && !(this.config.media.enabled && s.type === 'image' && typeof s.data?.url === 'string'))) return;
     const images=e.message.filter(s=>s.type==='image').map(s=>({url:s.data.url}));if(images.length>this.config.media.maxImages)return;
     const text = e.message.filter(s=>s.type==='text').map(s => s.data.text).join('') || (images.length?'[QQ图片 × '+images.length+']':''); if (!text.trim() || text.length > this.config.bridge.maxTextChars) return;
-    this.store.ingestQQ(this.account, user, String(e.message_id), text, images);
+    this.runtime.addressBook.observeQQ(user,{nickname:e.sender?.nickname});
+    const actor=this.runtime.addressBook.actor({account:this.account,user},{});
+    this.store.ingestQQ(this.account, user, String(e.message_id), text, images, actor);
     const job = this.store.db.prepare('SELECT * FROM jobs WHERE account=? AND user=? AND message_id=?').get(this.account, user, String(e.message_id));
     if (job) { this.runtime.rememberContact(job); if (this.store.active(job.session)) this.runtime.flag(job.session, 'preempt'); }
   }
@@ -49,6 +51,7 @@ export class QQChannel {
     const rows = await this.rpc('get_friend_list');
     if (!Array.isArray(rows) || rows.some(r => !qqId(r.user_id))) throw new BridgeError('qq-friend-list-invalid');
     this.friends = new Set(rows.map(r => qqId(r.user_id)).filter(id => 'qq:' + id !== this.account));
+    for(const row of rows)this.runtime.addressBook.observeQQ(qqId(row.user_id),{nickname:row.nickname,remark:row.remark});
     this.runtime.db.prepare("DELETE FROM contacts WHERE account=?").run(this.account);
     for (const user of this.friends) {
       const id = this.runtime.contactId({ account: this.account, user });

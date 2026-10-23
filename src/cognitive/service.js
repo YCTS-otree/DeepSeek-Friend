@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CognitiveStore, budget, clean, digest } from './store.js';
 import { BridgeError, backoff, log, sleep } from '../util.js';
+import { senderActor } from '../contacts.js';
 
 export function localClock(now, timezone) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now)).map(x => [x.type, x.value]));
@@ -45,8 +46,7 @@ export class CognitiveService {
       this.store.db.prepare('INSERT INTO bridge_receipts VALUES(?,?)').run(job.id, scope);
     });
   }
-  actor(job) { if (job.kind === 'alarm') return { displayName: '内部闹钟/本机唤醒', kind: 'runtime' }; if (JSON.parse(job.payload).actor) return JSON.parse(job.payload).actor; return { accountId: job.account, userId: job.user,
-    displayName: job.account === this.account.accountId && job.user === this.account.ownerId ? 'OTREE' : '微信用户 ' + job.user }; }
+  actor(job) { if (job.kind === 'alarm') return { displayName: '内部闹钟/本机唤醒', kind: 'runtime' }; return JSON.parse(job.payload).actor ?? senderActor(job,this.account); }
   idle(session, at = this.now()) {
     this.active.delete(session); const binding = this.store.binding(session);
     if (binding) {

@@ -141,3 +141,19 @@ test('QQ image preparation success never releases a Session after ambiguous DSH 
   const first=f.store.db.prepare("SELECT * FROM jobs WHERE message_id='uncertain-image'").get();assert.equal(first.state,'review');assert.equal(first.error,'dsh-protocol');
   await f.engine.tick();await f.engine.drain();assert.equal(f.dsh.calls.filter(c=>c.endpoint==='session/prompt').length,1);assert.equal(f.store.db.prepare("SELECT state FROM jobs WHERE message_id='blocked-later'").get().state,'queued');
 });
+
+test('QQ sender labels, nickname and remarks reach prompt and cognitive binding from the same saved actor',async t=>{
+  const f=await fixture(t);f.engine.runtime.addressBook.observeQQ('3626097226',{nickname:'鲸鱼朋友',remark:'我的备注'});
+  let boundActor;f.engine.cognitive={bind(job){boundActor=JSON.parse(job.payload).actor;}};
+  f.send(3626097226,'identity test',{sender:{nickname:'当前昵称',user_id:11112222}});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());
+  const job=f.store.db.prepare('SELECT * FROM jobs').get();const before=JSON.parse(job.payload).actor;assert.equal(before.displayName,'OTREE');assert.equal(before.nickname,'当前昵称');assert.equal(before.remark,'我的备注');
+  await f.engine.submit(job);const saved=JSON.parse(f.store.job(job.id).payload),prompt=f.dsh.calls.find(c=>c.endpoint==='session/prompt').args.content[0].text;
+  assert.match(prompt,/QQ消息 · OTREE/);assert.ok(!prompt.includes('微信用户'));assert.equal(boundActor.trustedOwner,true);assert.deepEqual(boundActor,saved.actor);assert.equal(boundActor.userId,'3626097226');
+  f.engine.cognitive=null;
+});
+test('QQ display precedence uses address-book alias then friend remark then nickname without granting OTREE',async t=>{
+  const f=await fixture(t),book=f.engine.runtime.addressBook,user='88776655',job={account:'qq:99990000',user};
+  book.observeQQ(user,{nickname:'OTREE',remark:'好友备注'});assert.equal(book.actor(job,account).displayName,'好友备注');assert.equal(book.actor(job,account).trustedOwner,false);
+  book.edit({channel:'qq',peer:user,alias:'通讯录备注'});const actor=book.actor(job,account);assert.equal(actor.displayName,'通讯录备注');assert.equal(actor.nickname,'OTREE');assert.equal(actor.remark,'好友备注');assert.equal(actor.trustedOwner,false);
+  book.observeQQ('77665544',{nickname:'只有昵称'});assert.equal(book.actor({account:job.account,user:'77665544'},account).displayName,'只有昵称');
+});

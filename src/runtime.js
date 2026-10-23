@@ -103,7 +103,7 @@ export class RuntimeStore {
     const id = this.contactId(job);
     this.db.prepare('INSERT INTO contacts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET job=excluded.job,updated=excluded.updated WHERE excluded.updated>=contacts.updated').run(id, job.account, job.user, job.id, job.created);
   }
-  contacts() { return this.db.prepare('SELECT id,account,user,updated FROM contacts ORDER BY updated DESC LIMIT 500').all().map(r => ({ ...r, channel: r.account.startsWith('qq:') ? 'qq' : 'weixin', ...this.addressBook.db.prepare('SELECT alias FROM address_book WHERE channel=? AND peer=?').get(r.account.startsWith('qq:') ? 'qq' : 'weixin', r.user) })); }
+  contacts() { return this.db.prepare("SELECT c.id,c.account,c.user,c.updated,p.nickname,p.remark FROM contacts c LEFT JOIN contact_profiles p ON p.channel='qq' AND p.peer=c.user AND c.account LIKE 'qq:%' ORDER BY c.updated DESC LIMIT 500").all().map(r => ({ ...r, channel: r.account.startsWith('qq:') ? 'qq' : 'weixin', ...this.addressBook.db.prepare('SELECT alias FROM address_book WHERE channel=? AND peer=?').get(r.account.startsWith('qq:') ? 'qq' : 'weixin', r.user) })); }
   emit(session, call, text = '', image = null, recipient) {
     const c = this.context(session); if (!c) throw new BridgeError('outbound-context-required');
     const contact = c.kind === 'test' ? null : recipient
