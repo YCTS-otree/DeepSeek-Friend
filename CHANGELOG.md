@@ -309,3 +309,4 @@
 ### Added
 - 新增后续规划文档与 README 导航，记录两个候选仓库、互联网访问须过滤并反复确认的约束，以及 Bilibili、Minecraft、Live2D 模型与控制器 TODO；仅更新文档，版本保持 v1.8.2。
 - 创建私有 GitHub 仓库 https://github.com/YCTS-otree/DeepSeek-Friend，以 main 同步源码、文档与测试；首次推送前核对历史文件范围及常见凭据模式。朋友包、运行数据、授权与归档保持本地。
+- 按用户要求将 GitHub 仓库改为公开；已复核远端文件范围与发布附件，并通过匿名 API 请求验证 public 可见性。完整朋友包仍供私下交流。
