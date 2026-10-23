@@ -1,5 +1,7 @@
 # v1.5：QQ、来源身份与受限互联网
 
+本文记录 v1.5 的边界。**v1.6 已增加项目内网关部署、首页扫码、一键启动和 QQ 图片/收藏表情工具**，当前部署请先阅读 [v1.6 网关说明](qq-gateway-v16.md)。下文的“另行准备网关”“不支持图片”仅指 v1.5 初版。
+
 ## QQ 部署
 
 QQ 沿用参考项目 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) 的 OneBot v11 action 与消息事件约定。本次经用户指定代理读取提交 `a49877f4e58d04e47532d44b803360d0f001160d` 的实际 bridge.js、safe-fetch.js；采用独立的小型 ws 客户端，没有复制整套 QQ Bridge/Agent Runtime。QQ 网关需由操作者另行准备；QQ 登录、账号授权及二维码属于该网关，不在此控制台模拟。

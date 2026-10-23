@@ -89,3 +89,18 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 ## v1.4.1 旧会话工具加载
 
 若出现 DSH Agent 异常且模型返回 INVALID_REQUEST、at least one tool must have defer_loading=false，升级至 v1.4.1 并重启项目实例。补丁通过原生 request series 兼容旧空工具基线，原 Session 和消息保持保留。当前实例已应用，不必新建会话。完整复现与验证见 [incident-tool-loading.md](incident-tool-loading.md)。
+
+## v1.6 QQ Bot 与首页
+
+首页并列微信/QQ授权卡片，「02 / 服务控制」一键启动独立 DSH、微信 Bridge、已安装的 QQ Bot；QQ Bridge 在登录完成后自动连接。QQ Bot 单独停止不结束微信或原 DSH Session。详细安装、表情工具和验收边界见 [qq-gateway-v16.md](qq-gateway-v16.md)。
+
+- `qq-gateway-not-installed`：先执行 `npm run qq:setup`，只安装项目内固定版本的官方 Windows 包。
+- `qq-gateway-port-in-use`：6101 或 3001 已被使用，先停止原实例；不会接管或结束无关服务。
+- `qq-gateway-start-timeout` / `qq-gateway-exited`：检查原生包、账号状态和 Windows 环境后重新启动 QQ Bot；不会把原生程序的完整输出或 Token 放入网页。
+- `cooldown`：旧版网页状态，v1.6.2 已删除。冷静期由手机端处理，网页不额外倒计时或拦截刷新，按原生状态显示。
+- 等待手机确认：按原生网关状态显示，不添加网页冷静期；原始错误以脱敏纯文本显示在 QQ 卡片。
+- `qq-sticker-cache-pending`：图片仍在按需缓存，可稍后查看；不必重新添加收藏。
+- 收藏/发送结果 `unknown`：本机核对实际 QQ 结果，不自动重试，避免重复副作用。
+
+- `qq-gateway-account-in-use`：原生登录明确报告账号已在桌面 QQ 登录；只退出机器人账号的桌面登录后刷新二维码，其他账号可继续使用。
+- `qq-gateway-onebot-config`：QQ 已登录，正在重试配置消息通道；不再把这个后续错误显示为未登录。

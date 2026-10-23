@@ -20,7 +20,7 @@ export class QQChannel {
   allowed(account, user) { return this.settings().enabled && account === this.account && this.friends.has(user); }
   async rpc(action, params = {}) {
     if (this.ws?.readyState !== WebSocket.OPEN) throw new BridgeError('qq-disconnected', '', { retryable: true });
-    const echo = randomUUID(), ambiguous = action === 'send_private_msg';
+    const echo = randomUUID(), ambiguous = ['send_private_msg','add_custom_face'].includes(action);
     return new Promise((resolve, reject) => {
       const fail = code => reject(Object.assign(new BridgeError(code), { ambiguous, retryable: !ambiguous }));
       const timer = setTimeout(() => { this.pending.delete(echo); fail('qq-timeout'); }, 6000);
@@ -38,9 +38,10 @@ export class QQChannel {
     const user = qqId(e.user_id), message = qqId(e.self_id);
     if (this.state !== 'connected' || e.post_type !== 'message' || e.message_type !== 'private' || !user || 'qq:' + message !== this.account || !this.friends.has(user)
       || !['string','number'].includes(typeof e.message_id) || !String(e.message_id) || !Array.isArray(e.message)) return;
-    if (e.message.some(s => s.type !== 'text' || typeof s.data?.text !== 'string')) return; // QQ text MVP: no CQ decoding or arbitrary media URLs.
-    const text = e.message.map(s => s.data.text).join(''); if (!text.trim() || text.length > this.config.bridge.maxTextChars) return;
-    this.store.ingestQQ(this.account, user, String(e.message_id), text);
+    if (e.message.some(s => !(s.type === 'text' && typeof s.data?.text === 'string') && !(this.config.media.enabled && s.type === 'image' && typeof s.data?.url === 'string'))) return;
+    const images=e.message.filter(s=>s.type==='image').map(s=>({url:s.data.url}));if(images.length>this.config.media.maxImages)return;
+    const text = e.message.filter(s=>s.type==='text').map(s => s.data.text).join('') || (images.length?'[QQ图片 × '+images.length+']':''); if (!text.trim() || text.length > this.config.bridge.maxTextChars) return;
+    this.store.ingestQQ(this.account, user, String(e.message_id), text, images);
     const job = this.store.db.prepare('SELECT * FROM jobs WHERE account=? AND user=? AND message_id=?').get(this.account, user, String(e.message_id));
     if (job) { this.runtime.rememberContact(job); if (this.store.active(job.session)) this.runtime.flag(job.session, 'preempt'); }
   }
@@ -62,11 +63,12 @@ export class QQChannel {
     this.ws.on('close', () => { for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject('qq-disconnected'); } this.pending.clear(); });
     await new Promise((resolve, reject) => { this.ws.once('open', resolve); this.ws.once('error', () => reject(new BridgeError('qq-connect-failed'))); this.ws.once('close', () => reject(new BridgeError('qq-disconnected'))); });
     const login = await this.rpc('get_login_info'); const id = qqId(login?.user_id); if (!id) throw new BridgeError('qq-account-invalid');
-    this.account = 'qq:' + id; await this.refreshFriends(); this.state = 'connected'; this.error = null;
+    this.account = 'qq:' + id; await this.refreshFriends(); this.state = 'connected'; this.error = null; this.runtime.saveChannelSettings('qq-live',{account:this.account});
   }
   async send(body) {
     if (!this.allowed(body.qq.account, body.qq.user)) throw Object.assign(new BridgeError('qq-recipient-unavailable'), { retryable: true });
-    const result = await this.rpc('send_private_msg', { user_id: Number(body.qq.user), message: [{ type: 'text', data: { text: body.qq.text } }] });
+    const message=body.qq.file?[{type:'image',data:{file:body.qq.file,sub_type:1}}]:[{ type: 'text', data: { text: body.qq.text } }];
+    const result = await this.rpc('send_private_msg', { user_id: Number(body.qq.user), message });
     if (!['number','string'].includes(typeof result?.message_id)) throw Object.assign(new BridgeError('qq-send-unconfirmed'), { ambiguous: true });
     return { message_id: String(result.message_id) };
   }

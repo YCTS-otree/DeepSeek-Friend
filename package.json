@@ -1,6 +1,6 @@
 {
   "name": "deepseek-friend",
-  "version": "1.5.0",
+  "version": "1.6.2",
   "private": true,
   "description": "独立微信 iLink ↔ DeepSeek Harness Bridge",
   "type": "module",
@@ -20,7 +20,8 @@
     "cognitive": "node scripts/cognitive.js",
     "test:cognitive:live": "node scripts/cognitive-live.js",
     "cognitive:eval": "node scripts/cognitive-live.js --evaluate",
-    "release": "node scripts/release.js"
+    "release": "node scripts/release.js",
+    "qq:setup": "python scripts/qq-setup.py"
   },
   "dependencies": {
     "qrcode-terminal": "0.12.0",

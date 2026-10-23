@@ -7,6 +7,7 @@ import { RuntimeStore } from './runtime.js';
 import { MediaClient } from './media.js';
 import { QQChannel } from './qq.js';
 import { OWNER_QQ } from './contacts.js';
+import { QQMedia } from './qq-media.js';
 
 export const isCommand = text => /^\/(?:approve|deny|answer|cancel|reset|status)(?:\s|$)/.test(text.trim());
 export function publicEvent(event) {
@@ -49,6 +50,7 @@ export class Engine {
     this.explicit = config.interaction?.enabled === true;
     this.qq = this.runtime ? new QQChannel(config, this.runtime, store, this.signal) : null;
     this.media = config.media?.enabled ? new MediaClient(config.media, this.runtime, ilink) : null;
+    this.qqMedia = this.qq && this.media ? new QQMedia(this.runtime,this.qq,this.media,this.signal) : null;
     this.busy = new Map(); this.chains = new Map(); this.pendingTasks = new Set(); this.stopped = false;
     dsh.on('session', (sid, frame) => this.enqueueSession(sid, frame));
     dsh.on('request', request => this.task(() => this.onRequest(request)));
@@ -174,7 +176,7 @@ export class Engine {
       let savedPayload = JSON.parse(this.store.job(job.id).payload);
       if (savedPayload.images?.length && !savedPayload.imageParts) {
         if (!this.media) throw new BridgeError('media-disabled');
-        const parts = []; for (const item of savedPayload.images) { const image = await this.media.receive(item, this.signal); parts.push({ type: 'image', mediaType: image.mediaType, data: image.data, name: image.id }); }
+        const parts = []; for (const item of savedPayload.images) { const image = savedPayload.channel==='qq' ? await this.qqMedia.receive(item) : await this.media.receive(item, this.signal); parts.push({ type: 'image', mediaType: image.mediaType, data: image.data, name: image.id }); }
         savedPayload.imageParts = parts;
         this.store.db.prepare('UPDATE jobs SET payload=? WHERE id=?').run(JSON.stringify(savedPayload), job.id);
       }
@@ -311,6 +313,7 @@ export class Engine {
   }
   async tick() {
     const now = Date.now();
+    if(this.qqMedia && !this.qqMediaBusy){this.qqMediaBusy=true;this.task(()=>this.qqMedia.tick()).finally(()=>{this.qqMediaBusy=false;});}
     if (this.runtime) { await this.flushEmissions(); this.scheduleAlarms(now); }
     for (const p of this.store.db.prepare("SELECT * FROM pending WHERE state='pending' AND expires<=?").all(now)) {
       this.store.db.prepare("UPDATE pending SET state='stale' WHERE id=?").run(p.id);
@@ -347,6 +350,7 @@ export class Engine {
       (SELECT 1 FROM outbox earlier WHERE earlier.account=o.account AND earlier.user=o.user AND earlier.rowid<o.rowid AND earlier.state IN ('pending','sending','unknown')) ORDER BY o.rowid LIMIT 1`).get(this.account.accountId, this.qq?.account ?? '', Date.now());
     if (!row) return false;
     let body = JSON.parse(row.body);
+    if(body.qq?.image){try{body={qq:{...body.qq,file:this.qqMedia.sendImage(body.qq.image)}};}catch(e){this.store.db.prepare("UPDATE outbox SET state='failed',error=? WHERE id=?").run(e.code??'qq-image',row.id);return true;}}
     if (body.imageJob) {
       try {
         const p = body.imageJob;
@@ -435,7 +439,7 @@ export class Engine {
           if (row.image) {
             const p = JSON.parse(delivery.payload), clientId = 'dsfriend-' + createHash('sha256').update(row.id).digest('hex').slice(0, 40);
             this.store.db.prepare('INSERT OR IGNORE INTO outbox(id,account,user,body,created) VALUES(?,?,?,?,?)').run('image:' + row.id, delivery.account, delivery.user,
-              JSON.stringify({ imageJob: { image: row.image, context: p.context, runId: p.runId, clientId } }), row.created);
+              JSON.stringify(delivery.account.startsWith('qq:')?{qq:{account:delivery.account,user:delivery.user,image:row.image}}:{ imageJob: { image: row.image, context: p.context, runId: p.runId, clientId } }), row.created);
           } else this.store.reply({ ...delivery, session: row.session }, row.text, 'emission:' + row.id, this.config.bridge.maxReplyChars);
         }
       });

@@ -1,6 +1,6 @@
 # 兼容性边界
 
-记录日期：2026-10-23；Bridge：1.5.0。
+记录日期：2026-10-23；Bridge：1.6.2。
 
 | 对象 | 依据 | 状态 |
 | --- | --- | --- |
@@ -54,3 +54,7 @@ DSH Cookie 仍代表本机操作者，没有在此版本验证过仅会话级专
 腾讯图片 CDN/AES/getuploadurl 字段基于本轮实际官方源码和 Mock。主动联系已经用户授权，但 API 的任意联系人、上下文有效时长、client_id 去重均无新增保证；发送必须复用已有授权联系人的真实入站凭据。详细源码提交、角色、迁移和未验证范围见 [interaction-v14.md](interaction-v14.md)。
 
 v1.4.1 对旧空工具基线使用原生 agent/pre-step / startsRequestSeries 重建模型工具声明基线；DSH Session 与历史保持原样，避免 addition-only 投影导致全部工具延迟加载而被服务端拒绝。已先用真实 Flash 复现，再验证修复，详见 [incident-tool-loading.md](incident-tool-loading.md)。
+
+## v1.6 QQ 网关
+
+可选 NapCat 4.18.41 官方 Windows 原生包由项目内管理器监督，与独立 DSH 的 Node 24 进程分开运行；不修改 DSH 核心或现有 QQ。基于实际 HTTP/OneBot 源码实现扫码状态、脱敏原始错误、收藏表情及原生 DSH 图片块。真实原生包二维码 API 已在本机验证，实际 QQ 手机登录、Core 在线与真实好友/收藏列表已验收，收发/添加收藏仍待验收；QQ Bridge 及四项服务已进入首页一键启动。固定版本、许可证、运行目录和恢复限制见 [网关说明](qq-gateway-v16.md)。

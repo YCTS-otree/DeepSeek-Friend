@@ -306,3 +306,11 @@ Located in ./vendor/QRCode
 ## DeepSeek Harness
 
 The independent runtime @deepseek-ai/dsh 0.2.0-rc.2 is MIT licensed and installed separately from its pinned lockfile. Its own dependency licenses remain in .runtime/node_modules. No existing DSH credentials, private keys or local modifications are copied into this project or a release.
+
+## NapCatQQ (optional, separately installed gateway)
+
+The optional Windows gateway is the unmodified official NapNeko/NapCatQQ 4.18.41 release. Its native binaries and bundled Node.js are installed only in the local `.runtime/qq-gateway/` directory and are excluded from this repository and source releases. The upstream package retains its own license files and third-party notices.
+
+NapCat uses the **Limited Redistribution License for NapCat**, not this project's MIT license. Upstream restrictions, including non-commercial use and redistribution conditions, apply to that separate software. Consult the original license before use or redistribution: https://github.com/NapNeko/NapCatQQ/blob/main/LICENSE . This project does not relicense or modify the gateway.
+
+API interoperability was researched from upstream commit `3420f0b76d7dc0ac92cde1663f21ea27f61e13bb`; our supervisor and OneBot integration are independently implemented. The official reference qq-bridge uses SnowLuma; SnowLuma is not installed or redistributed by this project.

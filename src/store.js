@@ -35,10 +35,10 @@ export class Store {
     // A crashed sender may have succeeded remotely. Never auto-replay this state.
     this.db.exec("UPDATE outbox SET state='unknown',error='process-interrupted' WHERE state='sending'; UPDATE pending SET state='stale' WHERE state IN ('pending','answering')");
   }
-  ingestQQ(account, user, messageId, text) {
+  ingestQQ(account, user, messageId, text, images = []) {
     return this.tx(() => {
       const now = Date.now(), id = randomUUID();
-      const inserted = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, account, user, messageId, JSON.stringify({ channel: 'qq', text, supported: true }), randomUUID(), now, now);
+      const inserted = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, account, user, messageId, JSON.stringify({ channel: 'qq', text, supported: true, ...(images.length?{images}:{}) }), randomUUID(), now, now);
       if (!inserted.changes) return;
       const sid = this.ensureMapping(account, user).session;
       this.db.prepare('UPDATE jobs SET session=? WHERE id=?').run(sid, id);

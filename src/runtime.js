@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { BridgeError } from './util.js';
+import { BridgeError, sleep } from './util.js';
 import { clean } from './cognitive/store.js';
 import { AddressBook } from './contacts.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -30,6 +30,29 @@ export class RuntimeStore {
       CREATE TABLE IF NOT EXISTS reply_candidates(job TEXT NOT NULL,seq INTEGER NOT NULL,text TEXT NOT NULL,PRIMARY KEY(job,seq));`);
     if (!this.db.prepare('PRAGMA table_info(reply_routes)').all().some(c => c.name === 'is_private')) this.db.exec('ALTER TABLE reply_routes ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
     this.addressBook = new AddressBook(this.db);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS qq_favorites(id TEXT PRIMARY KEY,account TEXT NOT NULL,resid TEXT NOT NULL,url TEXT NOT NULL,description TEXT NOT NULL,image TEXT,available INTEGER NOT NULL DEFAULT 1,requested INTEGER NOT NULL DEFAULT 0,error TEXT);
+      CREATE TABLE IF NOT EXISTS qq_media_actions(id TEXT PRIMARY KEY,session TEXT NOT NULL,image TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',error TEXT,created INTEGER NOT NULL,account TEXT);`);
+    if(!this.db.prepare('PRAGMA table_info(qq_media_actions)').all().some(c=>c.name==='account'))this.db.exec('ALTER TABLE qq_media_actions ADD COLUMN account TEXT');
+  }
+  qqFavorites() { return this.db.prepare('SELECT id,account,description,image,error FROM qq_favorites WHERE available=1 AND account=? ORDER BY rowid LIMIT 100').all(this.channelSettings('qq-live').account??''); }
+  async favoriteImage(session,id,signal) {
+    if(this.context(session)?.kind==='test')throw new BridgeError('test-image-library-isolated');
+    const row=this.db.prepare('SELECT * FROM qq_favorites WHERE id=? AND available=1 AND account=?').get(id,this.channelSettings('qq-live').account??'');if(!row)throw new BridgeError('qq-sticker-not-found');
+    if(row.image)return row.image;
+    this.db.prepare('UPDATE qq_favorites SET requested=?,error=NULL WHERE id=?').run(Date.now(),id);
+    for(let i=0;i<80;i++){await sleep(150,signal);const saved=this.db.prepare('SELECT image,error FROM qq_favorites WHERE id=?').get(id);if(saved?.image)return saved.image;if(saved?.error)throw new BridgeError(saved.error);}
+    throw new BridgeError('qq-sticker-cache-pending');
+  }
+  async addFavorite(session,call,image,signal) {
+    const c=this.context(session);if(!c||c.kind==='test')throw new BridgeError('test-image-library-isolated');
+    if(!this.db.prepare('SELECT 1 FROM images WHERE id=?').get(image))throw new BridgeError('image-not-found');
+    const id=session+':'+c.job+':'+call;
+    const account=this.channelSettings('qq-live').account;if(!/^qq:[1-9]\d+$/.test(account??''))throw new BridgeError('qq-not-connected');
+    const previous=this.db.prepare("SELECT id,state,error FROM qq_media_actions WHERE account=? AND image=? AND state IN ('pending','running','unknown') ORDER BY created DESC LIMIT 1").get(account,image);
+    if(previous && previous.id!==id)return previous;
+    this.db.prepare('INSERT OR IGNORE INTO qq_media_actions(id,session,image,created,account) VALUES(?,?,?,?,?)').run(id,session,image,Date.now(),account);
+    for(let i=0;i<80;i++){const row=this.db.prepare('SELECT id,state,error FROM qq_media_actions WHERE id=?').get(id);if(row.state!=='pending'&&row.state!=='running')return row;await sleep(150,signal);}
+    return {id,state:'pending',meaning:'已持久排队，不代表收藏成功；结果不明时不会自动重试。'};
   }
   channelSettings(name, defaults = {}) { const row = this.db.prepare('SELECT v FROM settings WHERE k=?').get('channel:' + name); return { ...defaults, ...(row ? JSON.parse(row.v) : {}) }; }
   saveChannelSettings(name, value) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run('channel:' + name, JSON.stringify(value)); return value; }
@@ -91,7 +114,6 @@ export class RuntimeStore {
     if (typeof text !== 'string' || text.length > 16000 || clean(text, 16000) !== text || (!text.trim() && !image)) throw new BridgeError('outbound-invalid');
     if (image && !this.db.prepare('SELECT 1 FROM images WHERE id=?').get(image)) throw new BridgeError('image-not-found');
     if (image && c.kind === 'test') throw new BridgeError('test-image-library-isolated');
-    if (image && contact?.account.startsWith('qq:')) throw new BridgeError('qq-text-only');
     const id = session + ':' + c.job + ':' + call;
     this.db.prepare('INSERT OR IGNORE INTO emissions(id,session,job,text,image,created,delivery_job) VALUES(?,?,?,?,?,?,?)').run(id, session, c.job, text, image, Date.now(), contact?.job ?? null);
     return { id, state: 'queued', meaning: c.kind === 'test' ? '仅进入独立测试记录，不发送微信' : '持久排队，尚不代表微信已送达' };
@@ -139,7 +161,7 @@ export class RuntimeStore {
   cancelAlarm(session, id) { return { changed: this.db.prepare("UPDATE alarms SET state='cancelled' WHERE session=? AND id=? AND state='scheduled'").run(session, id).changes }; }
   clearTest(session) {
     this.db.exec('BEGIN IMMEDIATE');
-    try { this.db.prepare('DELETE FROM reply_candidates WHERE job IN (SELECT job FROM reply_routes WHERE session=?)').run(session); for (const table of ['reply_routes', 'contexts', 'emissions', 'private_records', 'alarms']) this.db.prepare(`DELETE FROM ${table} WHERE session=?`).run(session); this.db.exec('COMMIT'); }
+    try { this.db.prepare('DELETE FROM reply_candidates WHERE job IN (SELECT job FROM reply_routes WHERE session=?)').run(session); for (const table of ['qq_media_actions', 'reply_routes', 'contexts', 'emissions', 'private_records', 'alarms']) this.db.prepare(`DELETE FROM ${table} WHERE session=?`).run(session); this.db.exec('COMMIT'); }
     catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   promptView(session, kind) {

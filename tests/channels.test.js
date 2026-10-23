@@ -14,6 +14,7 @@ import { publicIPv4, internetSettings, previewInternet, filterDocument } from '.
 import { AddressBook } from '../src/contacts.js';
 import { control } from '../src/controls.js';
 import { installInteraction } from '../dsh/interaction.js';
+import { QQMedia } from '../src/qq-media.js';
 import { FakeDsh, account, incoming, turn } from './helpers.js';
 
 async function until(predicate) { for (let n=0;n<200;n++) { if (predicate()) return; await new Promise(r=>setTimeout(r,10)); } throw Error('mock-qq-timeout'); }
@@ -23,7 +24,7 @@ async function fixture(t) {
   const store=new Store(path.join(dir,'bridge.sqlite')), dsh=new FakeDsh(), ac=new AbortController(), wx=[], actions=[];
   const engine=new Engine(config,store,dsh,{send:async b=>{wx.push(b);return{};}},account,ac.signal);
   const server=new WebSocketServer({host:'127.0.0.1',port:0}); await new Promise(r=>server.once('listening',r)); let socket,dropSend=false;
-  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(m.action==='send_private_msg'&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
+  server.on('connection',(s,request)=>{socket=s;assert.equal(request.headers.authorization,'Bearer MOCK_ONLY_TOKEN');s.on('message',raw=>{const m=JSON.parse(raw);actions.push(m);if(m.action==='send_private_msg'&&dropSend){s.close();return;} const data=m.action==='get_login_info'?{user_id:99990000,nickname:'untrusted'}:m.action==='get_friend_list'?[{user_id:3626097226,nickname:'someone'},{user_id:3326487557,nickname:'OTREE'}]:m.action==='fetch_custom_face_detail'?[{resId:'fixture-favorite',url:'https://gchat.qpic.cn/fixture.png',desc:'合成图片'}]:{message_id:12345};s.send(JSON.stringify({status:'ok',retcode:0,data,echo:m.echo}));});});
   engine.qq.credentials=()=>({token:'MOCK_ONLY_TOKEN'}); engine.runtime.saveChannelSettings('qq',{enabled:true,url:'ws://127.0.0.1:'+server.address().port});
   const running=engine.qq.run(); await until(()=>engine.qq.state==='connected');
   t.after(async()=>{ac.abort();await running;await engine.drain();for(const s of server.clients)s.terminate();await new Promise(r=>server.close(r));engine.runtime.close();store.close();});
@@ -84,4 +85,33 @@ test('internet pins validated DNS to HTTPS connection, returns bounded data and 
   const data=await previewInternet('https://example.org/page',settings,{resolve:async()=>[{address:'8.8.8.8'}],request});assert.equal(pinned,'8.8.8.8');assert.equal(data.agentVisible,false);assert.equal(data.trust,'external_unverified');
   const redirect=(_u,_o,callback)=>{const req=new EventEmitter();req.end=()=>{const res=new PassThrough();res.statusCode=302;res.headers={location:'https://127.0.0.1'};res.on('error',()=>{});callback(res);queueMicrotask(()=>req.emit('close'));};return req;};
   await assert.rejects(previewInternet('https://example.org',settings,{resolve:async()=>[{address:'8.8.8.8'}],request:redirect}),{code:'internet-response-denied'});
+});
+
+test('QQ favorites synchronize opaque IDs, view native images, and proactively send one image intent',async t=>{
+  const f=await fixture(t);f.engine.qqMedia.download=async()=>Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64');
+  f.store.ingest(account.accountId,{msgs:[incoming('seed','sticker-seed')]},new Set(['alice']),16000);const j=f.store.db.prepare("SELECT * FROM jobs WHERE message_id='sticker-seed'").get();await f.engine.submit(j);const sid=f.store.job(j.id).session;
+  await f.engine.qqMedia.refresh();const favorite=f.engine.runtime.qqFavorites()[0];assert.ok(favorite.id.startsWith('qqfav-'));assert.ok(!JSON.stringify(favorite).includes('https:'));
+  const imagePromise=f.engine.runtime.favoriteImage(sid,favorite.id);await f.engine.qqMedia.tick();const id=await imagePromise;
+  const tools=new Map();installInteraction({systemPrompt:{section(){}},on(){},tools:{register:t=>tools.set(t.name,t)}},f.engine.runtime);
+  const result=await tools.get('qq_image_view').execute({id:favorite.id},{agent:{id:sid}});assert.equal(result.type,'image');assert.equal(result.mediaType,'image/png');
+  const recipient=f.engine.runtime.contacts().find(c=>c.channel==='qq').id;
+  f.engine.runtime.emit(sid,'image-intent','',id,recipient);await f.engine.flushEmissions();await f.engine.sendOne();
+  const action=f.actions.find(a=>a.action==='send_private_msg');assert.equal(action.params.message[0].type,'image');assert.ok(action.params.message[0].data.file.startsWith('base64://'));
+  assert.throws(()=>f.engine.media.image('C:\\secret.key'),{code:'image-not-found'});
+});
+
+test('QQ inbound image enters native Agent vision and can be favorited without arbitrary file access or unknown retries',async t=>{
+  const f=await fixture(t);f.engine.qqMedia.download=async()=>Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kDLsAAAAASUVORK5CYII=','base64');
+  f.send(3326487557,'',{message:[{type:'image',data:{url:'https://gchat.qpic.cn/fixture.png'}}]});await until(()=>f.store.db.prepare('SELECT 1 FROM jobs').get());
+  const j=f.store.db.prepare('SELECT * FROM jobs').get();await f.engine.submit(j);const saved=f.store.job(j.id);assert.equal(f.dsh.calls.find(c=>c.endpoint==='session/prompt').args.content[1].type,'image');
+  const image=JSON.parse(saved.payload).imageParts[0].name;const promise=f.engine.runtime.addFavorite(saved.session,'favorite-action',image);await f.engine.qqMedia.tick();assert.equal((await promise).state,'done');
+  assert.ok(f.actions.find(a=>a.action==='add_custom_face').params.file.startsWith(f.config.dataDir));
+  f.engine.runtime.db.prepare("UPDATE qq_media_actions SET state='running'").run();new QQMedia(f.engine.runtime,f.engine.qq,f.engine.media,f.engine.signal);
+  const uncertain=await f.engine.runtime.addFavorite(saved.session,'different-call',image);assert.equal(uncertain.state,'unknown');assert.equal(f.actions.filter(a=>a.action==='add_custom_face').length,1);
+});
+
+test('QQ account changes hide previous account favorites and reject their opaque IDs',async t=>{
+  const f=await fixture(t);await f.engine.qqMedia.refresh();const favorite=f.engine.runtime.qqFavorites()[0];assert.ok(favorite);
+  f.engine.runtime.saveChannelSettings('qq-live',{account:'qq:11112222'});assert.equal(f.engine.runtime.qqFavorites().length,0);
+  await assert.rejects(f.engine.runtime.favoriteImage('synthetic-session',favorite.id),{code:'qq-sticker-not-found'});
 });

@@ -5,8 +5,9 @@ import vm from 'node:vm';
 
 function page() {
   const nodes = new Map();
-  function node() { return { children: [], textContent: '', value: '', hidden: false, disabled: false,
+  function node() { return { children: [], firstChild: { textContent: '' }, textContent: '', value: '', hidden: false, disabled: false,
     replaceChildren() { this.children = []; }, append(...children) { this.children.push(...children); }, addEventListener() {},
+    removeAttribute(name) { delete this[name]; },
     querySelector() { return node(); }, classList: { add() {}, remove() {} } }; }
   const get = id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); };
   const context = vm.createContext({ document: { getElementById: get, querySelectorAll: () => [], createElement: node },
@@ -48,4 +49,28 @@ test('older thought pages remain visible during refresh and user content is rend
   p.respond(() => ({ entries: [{ n: 41, kind: 'note', text: '<img onerror=bad>', created: 2 }], hasMore: true }));
   await p.run('loadThoughts()'); assert.equal(p.run('thoughtEntries.length'), 41);
   assert.equal(p.get('thought-records').children.at(-1).children[1].textContent, '<img onerror=bad>');
+});
+
+test('homepage distinguishes QQ Bot from QQ Bridge and keeps one-click start available for a stopped Bot', async () => {
+  const p=page();p.run('state={csrf:"fixture",version:"1.6.0",baseUrl:"http://127.0.0.1:3088",dsh:"ready",bridge:"ready",login:"ready",qqGateway:"stopped",qqLogin:"idle",logs:[]};render(state);');
+  assert.equal(p.get('start').disabled,false);assert.equal(p.get('qq-gateway-state').textContent,'已停止');assert.equal(p.get('qq-bridge-state').textContent,'等待 QQ 登录');
+  p.run('render({...state,qqGateway:"ready",qqLogin:"ready"})');
+  assert.equal(p.get('start').disabled,true);assert.equal(p.get('qq-gateway-state').textContent,'运行中 · 已登录');
+  p.respond(()=>({qq:{state:'connected',settings:{},friends:2,tokenSaved:true}}));await p.run('loadChannelStatus()');
+  assert.equal(p.get('qq-bridge-state').textContent,'已连接');
+  const html=fs.readFileSync('web/index.html','utf8'),overview=html.slice(html.indexOf('data-page="overview"'),html.indexOf('data-page="sessions"'));
+  for(const id of ['qq-qr','qr','qq-gateway-start','qq-gateway-state','qq-bridge-state'])assert.ok(overview.includes(`id="${id}"`));
+  assert.equal((html.match(/id="qq-qr"/g)??[]).length,1);
+});
+test('homepage mirrors native login and displays original error as text without imposing phone cooldown',()=>{
+  const p=page();p.run('state={csrf:"fixture",version:"1.6.2",baseUrl:"http://127.0.0.1:3088",dsh:"ready",bridge:"ready",login:"ready",qqGateway:"ready",qqLogin:"qrcode_scanned",qqErrorDetail:"<img onerror=bad> 原始提示",qqHasQr:false,logs:[]};render(state)');
+  assert.match(p.get('qq-login-status').textContent,/已扫码/);assert.ok(!p.get('qq-login-status').textContent.includes('冷静期'));
+  assert.equal(p.get('qq-gateway-refresh').disabled,false);assert.equal(p.get('qq-error-detail').textContent,'<img onerror=bad> 原始提示');assert.equal(p.get('qq-error-detail').hidden,false);
+  p.run('render({...state,qqLogin:"ready",qqErrorDetail:""})');assert.equal(p.get('qq-error-detail').hidden,true);assert.equal(p.get('qq-placeholder-title').textContent,'QQ 已连接');assert.equal(p.get('qq-gateway-refresh').disabled,true);
+});
+test('homepage explains account conflict but retains successful login when only OneBot configuration fails',()=>{
+  const p=page();p.run('state={csrf:"fixture",version:"1.6.1",baseUrl:"http://127.0.0.1:3088",dsh:"ready",bridge:"ready",login:"ready",qqGateway:"ready",qqLogin:"account_in_use",qqError:"qq-gateway-account-in-use",qqHasQr:true,logs:[]};render(state)');
+  assert.match(p.get('qq-login-status').textContent,/退出该机器人账号/);assert.equal(p.get('qq-login-badge').textContent,'账号占用');assert.equal(p.get('qq-qr').hidden,true);
+  p.run('render({...state,qqLogin:"ready",qqError:"qq-gateway-onebot-config",qqHasQr:false})');
+  assert.equal(p.get('qq-login-badge').textContent,'已登录');assert.match(p.get('qq-login-status').textContent,/QQ 已登录.*配置尚未成功/);
 });

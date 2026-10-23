@@ -38,8 +38,9 @@ class LauncherError(Exception):
 
 
 class Controller:
-    def __init__(self, root=ROOT):
+    def __init__(self, root=ROOT, auto_qq=False):
         self.root = Path(root)
+        self.auto_qq = auto_qq
         self.lock = threading.RLock()
         self.children = {}
         self.cancel = threading.Event()
@@ -52,6 +53,8 @@ class Controller:
                       "login": "idle", "verifyId": None, "qrRevision": 0,
                       "busy": False, "error": None, "baseUrl": "http://127.0.0.1:3088"}
         self.svg = None
+        self.qq_svg = None
+        self.state.update(qqGateway="stopped", qqLogin="idle", qqQrRevision=0, qqHasQr=False, qqAccount=None, qqError=None, qqErrorDetail="")
         self.worker = threading.Thread(target=self._work, daemon=True)
         self.worker.start()
 
@@ -74,7 +77,7 @@ class Controller:
         self.state["qrRevision"] += 1
 
     def enqueue(self, action):
-        if not isinstance(action, str) or action not in {"start", "stop", "login", "open-dsh"}:
+        if not isinstance(action, str) or action not in {"start", "stop", "login", "open-dsh", "qq-start", "qq-stop", "qq-refresh"}:
             raise LauncherError("invalid-action")
         with self.lock:
             if self.closed:
@@ -94,7 +97,15 @@ class Controller:
             if action is None:
                 return
             try:
-                if action == "stop":
+                if action == "qq-start":
+                    self._start_qq()
+                elif action == "qq-stop":
+                    (self.root / ".runtime/qq-gateway/autostart.flag").unlink(missing_ok=True)
+                    self._stop_child("qq")
+                elif action == "qq-refresh":
+                    if not self._send("qq", {"command": "qq-refresh"}):
+                        self._start_qq()
+                elif action == "stop":
                     self._stop_all()
                 elif action == "open-dsh":
                     if not self._send("dsh", {"command": "open-dsh"}):
@@ -154,6 +165,9 @@ class Controller:
                     return
                 if self.state[name] != "error":
                     self.state[name] = "stopped" if code == 0 or self.cancel.is_set() else "error"
+                if name == "qq":
+                    self.qq_svg = None
+                    self.state.update(qqGateway="stopped" if code == 0 else "error", qqLogin="idle", qqHasQr=False)
                 if name == "bridge":
                     self.svg = None
                     self.state["verifyId"] = None
@@ -170,6 +184,19 @@ class Controller:
 
     def _event(self, name, data):
         event = data.get("event", "")
+        if name == "qq" and event == "ui.qq":
+            phase = data.get("phase")
+            if phase not in {"starting", "waiting_qrcode", "generating_qrcode", "qrcode_scanned", "account_in_use", "initializing", "ready", "offline", "reconnecting", "error"}:
+                return
+            svg = data.get("svg")
+            if svg is not None and (not isinstance(svg, str) or len(svg) > 500000 or not svg.startswith('<svg xmlns="http://www.w3.org/2000/svg"') or re.search(r"<(?:script|image|foreignObject)\b|(?:href|onload)=", svg, re.I)):
+                return
+            if self.qq_svg != svg:
+                self.qq_svg = svg
+                self.state["qqQrRevision"] += 1
+            detail = data.get("errorDetail", "")
+            self.state.update(qqGateway="ready", qqLogin=phase, qqHasQr=svg is not None, qqAccount=data.get("account") if str(data.get("account", "")).isdigit() else None, qqError=data.get("error") if CODE_RE.fullmatch(str(data.get("error", ""))) else None, qqErrorDetail=detail[:2000] if isinstance(detail, str) else "")
+            return
         if name == "bridge" and event == "ui.sessions":
             pending = self.session_requests.get(data.get("id"))
             if pending:
@@ -253,6 +280,9 @@ class Controller:
             with self.lock:
                 self._clear_login()
             self._spawn("bridge", ["src/main.js", "login" if relogin else "start"], "login" if relogin else "start")
+
+        if self.auto_qq and (self.root / ".runtime/qq-gateway/4.18.41/node.exe").exists():
+            self._start_qq()
 
     def _send(self, name, data):
         with self.lock:
@@ -342,11 +372,25 @@ class Controller:
                     self.children.pop(name, None)
         with self.lock:
             self.state[name] = "stopped"
+            if name == "qq":
+                self.qq_svg = None
+                self.state.update(qqGateway="stopped", qqLogin="idle", qqHasQr=False, qqAccount=None, qqErrorDetail="")
             if name == "bridge":
                 self._clear_login()
 
+    def _start_qq(self):
+        install = self.root / ".runtime/qq-gateway/4.18.41"
+        if not (install / "node.exe").exists():
+            raise LauncherError("qq-gateway-not-installed")
+        if self._alive("qq"):
+            return
+        (install.parent / "autostart.flag").touch()
+        self.state.update(qqGateway="starting", qqLogin="starting", qqError=None, qqErrorDetail="")
+        self._spawn("qq", ["scripts/qq-gateway.js", "start"])
+
     def _stop_all(self):
         self.cancel.set()
+        self._stop_child("qq")
         self._stop_child("bridge")
         self._stop_child("dsh")
         with self.lock:
@@ -443,6 +487,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, (ROOT / "web" / filename).read_bytes(), mime)
         if target.path == "/api/state":
             return self._reply(200, {**self.server.controller.snapshot(), "csrf": self.server.csrf})
+        if target.path == "/api/qq-qr.svg":
+            with self.server.controller.lock:
+                svg = self.server.controller.qq_svg
+            return self._reply(200 if svg else 404, svg or "", "image/svg+xml")
         if target.path == "/api/qr.svg":
             with self.server.controller.lock:
                 svg = self.server.controller.svg
@@ -484,9 +532,9 @@ def main():
     parser = argparse.ArgumentParser(description="DeepSeek:Friend 本地 Web 启动器")
     parser.add_argument("--port", type=int, default=3090)
     parser.add_argument("--no-browser", action="store_true", help="仅运行服务，不自动打开浏览器")
-    parser.add_argument("--start", action="store_true", help="打开控制台后自动启动独立 DSH 和 Bridge")
+    parser.add_argument("--start", action="store_true", help="打开控制台后自动启动独立 DSH、Bridge 和已安装的 QQ Bot")
     args = parser.parse_args()
-    controller = Controller()
+    controller = Controller(auto_qq=True)
     try:
         server = LocalServer(("127.0.0.1", args.port), controller)
     except OSError:
@@ -499,7 +547,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     print(f"DeepSeek:Friend {VERSION} · 本地控制台 {server.origin}", flush=True)
-    print("浏览器将自动打开。请点击「启动服务」；关闭此终端会停止本启动器管理的服务。", flush=True)
+    print("浏览器将自动打开。请点击「一键启动全部」；关闭此终端会停止本启动器管理的服务。", flush=True)
     if not args.no_browser:
         webbrowser.open(server.launch_url())
     if args.start:
