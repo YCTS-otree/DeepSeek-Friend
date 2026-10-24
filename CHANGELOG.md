@@ -391,3 +391,5 @@
 - 固定八题来源覆盖仍为 7/8，MRR 0.504419；负面结果与失败样本保留，不宣称整体准确率提高。源码版本、报告、边界和回滚见 docs/mnn-integration.md 及 docs/mnn-deployment-v120.md。
 
 - 2026-10-24T23:40:32+08:00 已按用户指示上线数天实机测试：DSH/Bridge/QQ 启动且鉴权、微信轮询、QQ online/good 与 MNN NORMAL 核验通过；上线前 20261024-233842-416e0253.DSF 完整校验，互联网及 Self 自动正式提交仍关闭。
+
+- 修复首条实机消息无回复：维护遗留全局推理暂停已解除；原消息只提交一次，两条关联回复确认 sent，原 Session 与 Guardian NORMAL 保持。上线连通检查还需核对 runtime.paused。
