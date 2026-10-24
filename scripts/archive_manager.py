@@ -129,11 +129,11 @@ class ArchiveManager:
                     if z.getinfo('manifest.json').file_size > 8 * 1024**2:
                         raise ValueError()
                     m = json.loads(z.read('manifest.json'))
-            current = json.loads((self.root / 'package.json').read_text(encoding='utf-8'))['version']
+            report = dsf.dsf_compat.compatibility(m, self.root)
             return {'name': file.name, 'bytes': file.stat().st_size, 'createdAt': m.get('createdAt'),
                     'appVersion': m.get('appVersion'), 'dshVersion': m.get('dshVersion'),
                     'reason': m.get('reason', 'legacy'), 'files': len(m.get('files', {})),
-                    'compatible': m.get('appVersion') == current and m.get('dshVersion') == '0.2.0-rc.2',
+                    'compatible': report['canRestore'], 'selectable': any(r['canRestore'] and r['id'] not in ('bridge_state', 'dsh_context') for r in report['components']) or report['canRestore'], 'compatibility': report,
                     'verified': verify}
         except Exception:
             if verify:
@@ -188,6 +188,8 @@ class ArchiveManager:
                 return self.begin('create', {})
             if action == 'inspect':
                 return self.metadata(self.path(args.get('name')), True)
+            if action == 'restore-options':
+                return self.metadata(self.path(args.get('name')), True)
             if action == 'label':
                 name = self.path(args.get('name')).name
                 label = args.get('label')
@@ -212,9 +214,13 @@ class ArchiveManager:
             if action == 'restore-begin':
                 file = self.path(args.get('name'))
                 meta = self.metadata(file, True)
-                if not meta['compatible']:
-                    raise ArchiveError('dsf-app-version-mismatch')
+                report = dsf.dsf_compat.compatibility(dsf.inspect(file), self.root, args.get('components'))
+                if not report['canRestore']:
+                    raise ArchiveError('dsf-component-migration-required')
                 self.plan = {'id': secrets.token_hex(20), 'name': file.name, 'hash': dsf.digest(file),
+                             'createdAt': meta.get('createdAt'), 'creatorAppVersion': meta.get('appVersion'),
+                             'components': report['selected'], 'componentLabels': [r['label'] for r in report['components'] if r['selected']],
+                             'migrations': [name for r in report['components'] if r['selected'] for name in r['migrations']],
                              'step': 1, 'nonce': secrets.token_hex(20), 'ready': self.clock() + 3,
                              'expires': self.clock() + 900}
                 return self.view_plan()
@@ -233,11 +239,11 @@ class ArchiveManager:
                     p.update(step=p['step'] + 1, nonce=secrets.token_hex(20), ready=self.clock() + 3)
                     return self.view_plan()
                 self.plan = None  # The final confirmation is consumed before any operation starts.
-                return self.begin('restore', {'name': p['name'], 'hash': p['hash']})
+                return self.begin('restore', {'name': p['name'], 'hash': p['hash'], 'components': p['components']})
             raise ArchiveError('dsf-action-invalid')
 
     def view_plan(self):
-        return {k: self.plan[k] for k in ('id', 'name', 'step', 'nonce')} | {'waitMs': 3000}
+        return {k: self.plan[k] for k in ('id', 'name', 'step', 'nonce', 'components', 'componentLabels', 'migrations', 'createdAt', 'creatorAppVersion')} | {'waitMs': 3000}
 
     def begin(self, kind, args):
         # Caller holds Controller.lock; worker is shared with start/stop commands.
@@ -288,15 +294,16 @@ class ArchiveManager:
                 file = self.path(args['name'])
                 if dsf.digest(file) != args['hash']:
                     raise ArchiveError('dsf-confirmation-target-changed')
-                if not self.metadata(file, True)['compatible']:
-                    raise ArchiveError('dsf-app-version-mismatch')
+                manifest = dsf.inspect(file)
+                if not dsf.dsf_compat.compatibility(manifest, self.root, args['components'])['canRestore']:
+                    raise ArchiveError('dsf-component-migration-required')
             self.c._stop_child('bridge'); self.c._stop_child('dsh'); stopped = True
             data, port = dsf.settings(self.root)
             with dsf.offline(self.root, data, port):
                 op['progress'] = '保存并校验当前状态，失败则停止'
                 if op['kind'] == 'restore':
-                    current = dsf.restore(file, self.root, data, expected_digest=args['hash'])
-                    op['result'] = {'restored': file.name, 'beforeArchive': current.name}
+                    current = dsf.restore(file, self.root, data, expected_digest=args['hash'], components=args['components'])
+                    op['result'] = {'restored': file.name, 'components': args['components'], 'beforeArchive': current.name}
                 else:
                     current = dsf.snapshot(self.root, data, reason='before-' + args['action'] if op['kind'] == 'feature' else 'manual-web')
                     dsf.inspect(current)

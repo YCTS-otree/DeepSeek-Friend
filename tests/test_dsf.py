@@ -15,6 +15,8 @@ class DsfTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         root = Path(temp.name); data = root / 'data'; data.mkdir()
         (root / 'package.json').write_text('{"version":"1.5.0","description":"中文归档"}', encoding='utf-8')
+        runtime = root / '.runtime/node_modules/@deepseek-ai/dsh'; runtime.mkdir(parents=True)
+        (runtime / 'package.json').write_text('{"version":"0.2.0-rc.2"}')
         for name in dsf.PROMPTS:
             p = root / name; p.parent.mkdir(exist_ok=True); p.write_text('SYS initial', encoding='utf8')
         db = sqlite3.connect(data / 'bridge.sqlite'); db.execute('CREATE TABLE chat(text)'); db.execute("INSERT INTO chat VALUES('history')"); db.commit(); db.close()
@@ -43,7 +45,8 @@ class DsfTests(unittest.TestCase):
         for name in ['data/../outside.txt','data/cognitive/../../x','dsh/.credentials.yaml','data/credentials.json','data/cognitive/room/key.pem','C:/x','data\\cognitive\\x','dsh/llm-deepseek/token.json']:
             self.assertFalse(dsf.allowed(name))
         (root / 'package.json').write_text('{"version":"1.6.0"}')
-        with self.assertRaisesRegex(ValueError, 'version-mismatch'): dsf.restore(archive, root, data)
+        # Creator appVersion is provenance, not a component compatibility gate.
+        self.assertTrue(dsf.restore(archive, root, data).exists())
 
     def test_live_runtime_and_bridge_lock_refuse_backup(self):
         root, data = self.fixture()

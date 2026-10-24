@@ -23,6 +23,22 @@ test('archive relative ages show minutes, hours and combined days with stable in
  assert.equal(p.run('archiveAge("bad",ageNow)'),'时间未知');
 });
 
+test('component picker leaves unsupported context unselected while allowing room restore across app versions',async()=>{
+ const p=page(),calls=[];
+ const rows=[['dsh_context',false],['bridge_state',true],['cognitive_state',true],['room',true]].map(([id,canRestore])=>({id,label:id,canRestore,status:canRestore?'compatible':'migration-required',source:{format:id,version:1},target:{format:id,version:2},migrations:[]}));
+ p.respond(body=>{calls.push(body);if(body.action==='restore-options')return{appVersion:'1.9.1',compatibility:{components:rows}};if(body.action==='restore-begin')return{id:'plan',name:'old.DSF',nonce:'step1',step:1,waitMs:3000,components:body.args.components,componentLabels:body.args.components,migrations:[]};return{};});
+ await p.run('openArchiveComponents("old.DSF")');
+ assert.equal(p.run('archiveComponentInputs[0].box.disabled'),true);assert.equal(p.run('archiveComponentInputs[1].box.disabled'),true);
+ p.run('archiveComponentInputs[2].box.checked=false');await p.get('archive-components-confirm').listeners.click();
+ assert.deepEqual(calls.find(c=>c.action==='restore-begin').args.components,['room']);assert.match(p.get('archive-confirm-warning').textContent,/恢复范围：room/);assert.equal(p.get('archive-confirm').disabled,true);
+});
+
+test('component picker couples DSH and mapping checkboxes before entering the fixed restore plan',async()=>{
+ const p=page();p.respond(()=>({appVersion:'old',compatibility:{components:['dsh_context','bridge_state','room'].map(id=>({id,label:id,canRestore:true,status:'compatible',source:{format:id,version:1},target:{format:id,version:1},migrations:[]}))}}));
+ await p.run('openArchiveComponents("old.DSF")');p.run('archiveComponentInputs[0].box.checked=false;archiveComponentInputs[0].box.listeners.change()');
+ assert.equal(p.run('archiveComponentInputs[1].box.checked'),false);assert.equal(p.run('archiveComponentInputs[2].box.checked'),true);
+});
+
 test('group management shows escaped names, persists only the selected switch and disables offline changes',async()=>{
  const p=page(),requests=[];let enabled=false;
  p.respond(body=>{requests.push(body);if(body.action==='qq-group-configure'){enabled=body.args.enabled;return{enabled};}return{connected:true,groups:[{id:'1131809600',name:'<script>不是HTML</script>',members:4,enabled}]};});

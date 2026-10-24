@@ -6,6 +6,8 @@ const errors = {
   'dsf-confirmation-stale': '确认已过期或已被使用，请重新选择备份开始确认。',
   'dsf-confirmation-target-changed': '备份文件已发生变化，回滚已停止，请重新校验。',
   'dsf-app-version-mismatch': '备份版本与当前程序不一致，请先使用对应 Release，不能强行跨版本回滚。',
+  'dsf-component-migration-required': '所选组件需要迁移，或上下文与桥接状态没有成组选择。请查看组件兼容报告并调整选择。',
+  'dsf-component-selection-invalid': '请选择至少一个可恢复组件。',
   'dsf-verification-failed': '备份完整性校验失败，不能用于回滚。',
   'dsf-operation-failed': '归档或恢复失败，已停止操作。请检查状态，不要盲目重复回滚。',
   'node-not-found': '没有找到 Node.js。请确认 Node 24 或更新版本已加入 PATH。',
@@ -319,6 +321,23 @@ $('contacts-form').addEventListener('submit', async e => { e.preventDefault(); t
 $('internet-form').addEventListener('submit', async e => { e.preventDefault(); try { await sessionRequest('internet-configure', { enabled: $('internet-enabled').checked, allowedHosts: $('internet-hosts').value.split(',').map(x => x.trim()).filter(Boolean) }); channelDirty = false; $('internet-notice').textContent = '边界已保存，Agent 仍没有互联网接口。'; await loadChannels(); } catch (err) { failNotice('internet-notice', err); } });
 $('internet-preview-form').addEventListener('submit', async e => { e.preventDefault(); $('internet-result').textContent = ''; try { const data = await sessionRequest('internet-preview', { url: $('internet-url').value }); $('internet-result').textContent = data.text; $('internet-notice').textContent = data.warning + ' 移除 ' + data.removedLines + ' 行。'; } catch (err) { failNotice('internet-notice', err); } });
 let archivePlan=null,archiveReadyAt=0,archiveConfirmPending=false;
+let archiveComponentInputs=[],archiveSelectionName=null;
+async function openArchiveComponents(name){
+  if(archivePlan){await archiveRequest('restore-cancel',{id:archivePlan.id});archivePlan=null;$('archive-confirmation').hidden=true;}
+  const info=await archiveRequest('restore-options',{name});archiveSelectionName=name;archiveComponentInputs=[];
+  $('archive-components').replaceChildren();$('archive-component-selection').hidden=false;
+  $('archive-component-name').textContent=name+' · 创建程序 '+info.appVersion+'（仅作来源记录）';
+  const rows=info.compatibility.components,pair=['dsh_context','bridge_state'],pairReady=pair.every(id=>rows.some(r=>r.id===id&&r.canRestore));
+  for(const row of rows){
+    const label=document.createElement('label');label.className='check archive-component';const box=document.createElement('input');box.type='checkbox';box.value=row.id;
+    box.disabled=!row.canRestore||(pair.includes(row.id)&&!pairReady);box.checked=!box.disabled;
+    const text=document.createElement('span');text.textContent=row.label+' · '+row.source.format+'/'+row.source.version+' → '+row.target.format+'/'+row.target.version+' · '+(row.status==='compatible'?'兼容':row.canRestore?'恢复时迁移：'+row.migrations.map(m=>m==='legacy-v1-component-metadata'?'旧版组件格式识别':m).join(' → '):row.reason||'需要迁移器，暂未提供');
+    if(box.disabled&&row.canRestore)text.textContent+='；依赖的上下文/桥接组件暂不可恢复';
+    const entry={box,row};archiveComponentInputs.push(entry);
+    box.addEventListener('change',()=>{if(['dsh_context','bridge_state'].includes(row.id))for(const peer of archiveComponentInputs)if(['dsh_context','bridge_state'].includes(peer.row.id)&&!peer.box.disabled)peer.box.checked=box.checked;});
+    label.append(box,text);$('archive-components').append(label);
+  }
+}
 function archiveAge(value,now=Date.now()){
   const stamp=Date.parse(value);if(!Number.isFinite(stamp))return '时间未知';
   const minutes=Math.floor(Math.max(0,now-stamp)/60000);if(minutes<1)return '刚刚';
@@ -341,19 +360,19 @@ function archiveCountdown(){
 function showArchivePlan(plan){
   archivePlan=plan;archiveReadyAt=Date.now()+Math.max(3000,plan.waitMs);archiveConfirmPending=false;
   $('archive-confirmation').hidden=false;$('archive-confirm-title').textContent='回滚确认 '+plan.step+' / 3';
-  const warnings=['第一次确认：回滚会用这份归档替换当前聊天、DSH 上下文、统一记忆、Self 历史和小房间。请核对目标。','第二次确认：服务将暂停，归档之后的变化会从当前状态移走。请再次确认这是你要恢复的时间点。','第三次确认：执行前必须先保存并校验当前状态的 DSF；保存失败立即停止。确认后开始实际回滚。'];
-  $('archive-confirm-warning').textContent=plan.name+'\n'+warnings[plan.step-1];archiveCountdown();
+  const warnings=['第一次确认：仅替换所选组件，未选内容保持。请核对目标与恢复范围。','第二次确认：服务将暂停，所选组件在归档之后的变化会从当前状态移走。请再次确认时间点和迁移步骤。','第三次确认：执行前必须先保存并校验当前状态的 DSF；保存失败立即停止。确认后开始实际回滚。'];
+  $('archive-confirm-warning').textContent=plan.name+(plan.createdAt?'\n归档时间：'+new Date(plan.createdAt).toLocaleString():'')+'\n恢复范围：'+(plan.componentLabels??plan.components??[]).join('、')+'\n迁移：'+((plan.migrations??[]).join('、')||'无需迁移')+'\n'+warnings[plan.step-1];archiveCountdown();
 }
 async function loadArchives() {
   const data=await archiveRequest('list');$('archive-list').replaceChildren();$('archive-trash').replaceChildren();
   function button(label,handler){const b=document.createElement('button');b.type='button';b.className='text-button';b.textContent=label;b.addEventListener('click',async()=>{b.disabled=true;try{await handler();}catch(e){failNotice('archive-notice',e);}finally{b.disabled=false;}});return b;}
   for(const [key,target] of [['files','archive-list'],['trash','archive-trash']])for(const file of data[key]){
-    const row=document.createElement('div');row.className='archive-entry';const title=document.createElement('p');title.className='chat-note';title.textContent=(file.label?file.label+' · ':'')+file.name+' · '+Math.ceil(file.bytes/1024)+' KB · '+archiveAge(file.createdAt)+'（'+new Date(file.createdAt).toLocaleString()+'） · '+(file.invalid?'文件损坏或格式异常':file.appVersion+' · '+file.reason+(file.compatible?'':' · 需对应版本恢复'));
+    const row=document.createElement('div');row.className='archive-entry';const title=document.createElement('p');title.className='chat-note';title.textContent=(file.label?file.label+' · ':'')+file.name+' · '+Math.ceil(file.bytes/1024)+' KB · '+archiveAge(file.createdAt)+'（'+new Date(file.createdAt).toLocaleString()+'） · '+(file.invalid?'文件损坏或格式异常':file.appVersion+' · '+file.reason+(file.compatible?' · 全部组件兼容':' · 可按组件选择/迁移'));
     const actions=document.createElement('div');actions.className='archive-actions';row.append(title,actions);
     if(key==='trash')actions.append(button('还原备份',async()=>{await archiveRequest('untrash',{name:file.name});await loadArchives();}));
     else{
       const download=document.createElement('a');download.className='text-button';download.textContent='下载';download.href='/api/archive-download?name='+encodeURIComponent(file.name);download.download=file.name;
-      const restore=button('回滚',async()=>showArchivePlan(await archiveRequest('restore-begin',{name:file.name})));restore.disabled=!file.compatible||file.invalid;
+      const restore=button('选择组件回滚',async()=>openArchiveComponents(file.name));restore.disabled=!(file.selectable??file.compatible)||file.invalid;
       actions.append(download,button('完整校验',async()=>{$('archive-inspection').textContent=JSON.stringify(await archiveRequest('inspect',{name:file.name}),null,2);}),button('备注',async()=>{$('archive-label-name').value=file.name;$('archive-label').value=file.label??'';$('archive-label-form').hidden=false;}),restore,button('移入回收站',async()=>{await archiveRequest('trash',{name:file.name});if(archivePlan?.name===file.name){archivePlan=null;$('archive-confirmation').hidden=true;}await loadArchives();}));
     }
     $(target).append(row);
@@ -370,5 +389,7 @@ $('archive-confirm').addEventListener('click',async()=>{
   catch(e){archiveConfirmPending=false;archiveReadyAt=Date.now()+3000;archiveCountdown();failNotice('archive-notice',e);}
 });
 $('archive-cancel').addEventListener('click',async()=>{if(!archivePlan||archiveConfirmPending)return;try{await archiveRequest('restore-cancel',{id:archivePlan.id});archivePlan=null;$('archive-confirmation').hidden=true;}catch(e){failNotice('archive-notice',e);}});
+$('archive-components-confirm').addEventListener('click',async()=>{try{const components=archiveComponentInputs.filter(v=>v.box.checked&&!v.box.disabled).map(v=>v.row.id);const plan=await archiveRequest('restore-begin',{name:archiveSelectionName,components});$('archive-component-selection').hidden=true;showArchivePlan(plan);}catch(e){failNotice('archive-notice',e);}});
+$('archive-components-cancel').addEventListener('click',()=>{$('archive-component-selection').hidden=true;archiveSelectionName=null;archiveComponentInputs=[];});
 $('archive-label-form').addEventListener('submit',async e=>{e.preventDefault();try{await archiveRequest('label',{name:$('archive-label-name').value,label:$('archive-label').value});$('archive-label-form').hidden=true;await loadArchives();}catch(err){failNotice('archive-notice',err);}});
 $('refresh-archives').addEventListener('click', () => { void loadArchives().catch(e => failNotice('archive-notice', e)); });

@@ -110,7 +110,7 @@ class ArchiveTests(unittest.TestCase):
         with self.archive.open('ab') as f: f.write(b'changed')
         status = self.execute_op(p); self.assertEqual(status['error'], 'dsf-confirmation-target-changed'); self.assertEqual(self.c.calls, [])
         (self.root / 'package.json').write_text('{"version":"2.0.0"}')
-        with self.assertRaisesRegex(ArchiveError, 'version-mismatch'): self.begin()
+        self.assertEqual(self.begin()['step'], 1)  # Same formats remain compatible across application versions.
 
     def test_snapshot_failure_never_restores_and_resumes_owned_services(self):
         p = self.begin()
@@ -120,6 +120,16 @@ class ArchiveTests(unittest.TestCase):
             status = self.execute_op(p)
         self.assertEqual(status['state'], 'failed'); self.assertEqual(self.value(), 'old')
         self.assertIn(('start', {'bridge': True, 'qq': False}), self.c.calls)
+
+    def test_restore_selection_is_pinned_through_all_three_confirmations(self):
+        p=self.m.command('restore-begin',{'name':self.archive.name,'components':['room']})
+        with database(self.data/'bridge.sqlite') as db:db.execute("UPDATE sample SET value='current'")
+        for _ in range(3):
+            self.now+=3
+            p=self.m.command('restore-confirm',{**p,'components':['bridge_state']})
+        status=self.execute_op(p)
+        self.assertEqual(status['state'],'done');self.assertEqual(status['result']['components'],['room'])
+        self.assertEqual(self.value(),'current')
 
     def test_feature_boundary_checkpoint_is_verified_before_apply(self):
         self.assertIsNone(self.m.feature('internet-configure', {'enabled': False, 'allowedHosts': []}))
