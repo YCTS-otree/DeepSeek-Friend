@@ -121,15 +121,26 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(status['state'], 'failed'); self.assertEqual(self.value(), 'old')
         self.assertIn(('start', {'bridge': True, 'qq': False}), self.c.calls)
 
-    def test_restore_selection_is_pinned_through_all_three_confirmations(self):
-        p=self.m.command('restore-begin',{'name':self.archive.name,'components':['room']})
+    def test_whole_restore_is_pinned_through_all_three_confirmations(self):
+        with self.assertRaisesRegex(ArchiveError,'whole-restore-required'):
+            self.m.command('restore-begin',{'name':self.archive.name,'components':['room']})
+        p=self.begin(); scope=p['components']
         with database(self.data/'bridge.sqlite') as db:db.execute("UPDATE sample SET value='current'")
         for _ in range(3):
             self.now+=3
             p=self.m.command('restore-confirm',{**p,'components':['bridge_state']})
         status=self.execute_op(p)
-        self.assertEqual(status['state'],'done');self.assertEqual(status['result']['components'],['room'])
-        self.assertEqual(self.value(),'current')
+        self.assertEqual(status['state'],'done');self.assertEqual(status['result']['components'],scope)
+        self.assertEqual(self.value(),'old')
+
+    def test_one_missing_component_migration_blocks_whole_restore_before_maintenance(self):
+        target=dsf.dsf_compat.current_components(self.root);target['cognitive_state']['version']=2
+        with patch.object(dsf.dsf_compat,'current_components',return_value=target):
+            report=self.m.command('restore-options',{'name':self.archive.name})['compatibility']
+            rows={r['id']:r for r in report['components']}
+            self.assertTrue(rows['room']['canRestore']);self.assertFalse(rows['cognitive_state']['canRestore'])
+            with self.assertRaisesRegex(ArchiveError,'migration-required'):self.begin()
+        self.assertEqual(self.c.calls,[]);self.assertTrue(self.c.commands.empty())
 
     def test_feature_boundary_checkpoint_is_verified_before_apply(self):
         self.assertIsNone(self.m.feature('internet-configure', {'enabled': False, 'allowedHosts': []}))

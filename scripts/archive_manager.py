@@ -133,7 +133,7 @@ class ArchiveManager:
             return {'name': file.name, 'bytes': file.stat().st_size, 'createdAt': m.get('createdAt'),
                     'appVersion': m.get('appVersion'), 'dshVersion': m.get('dshVersion'),
                     'reason': m.get('reason', 'legacy'), 'files': len(m.get('files', {})),
-                    'compatible': report['canRestore'], 'selectable': any(r['canRestore'] and r['id'] not in ('bridge_state', 'dsh_context') for r in report['components']) or report['canRestore'], 'compatibility': report,
+                    'compatible': report['canRestore'], 'compatibility': report,
                     'verified': verify}
         except Exception:
             if verify:
@@ -212,9 +212,11 @@ class ArchiveManager:
                 source.rename(target)
                 return {'saved': True}
             if action == 'restore-begin':
+                if args.get('components') is not None:
+                    raise ArchiveError('dsf-whole-restore-required')
                 file = self.path(args.get('name'))
                 meta = self.metadata(file, True)
-                report = dsf.dsf_compat.compatibility(dsf.inspect(file), self.root, args.get('components'))
+                report = meta['compatibility']
                 if not report['canRestore']:
                     raise ArchiveError('dsf-component-migration-required')
                 self.plan = {'id': secrets.token_hex(20), 'name': file.name, 'hash': dsf.digest(file),

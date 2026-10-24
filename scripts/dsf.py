@@ -215,8 +215,8 @@ def restore(file, root=ROOT, data=None, expected_digest=None, components=None):
     return before
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('action', choices=['create','inspect','restore','plan']); parser.add_argument('file', nargs='?'); parser.add_argument('--components', help='Comma-separated component IDs to restore'); parser.add_argument('--confirm-restore', action='store_true'); args = parser.parse_args()
-    selected = args.components.split(',') if args.components else None
+    parser = argparse.ArgumentParser(); parser.add_argument('action', choices=['create','inspect','restore','plan']); parser.add_argument('file', nargs='?'); parser.add_argument('--confirm-restore', action='store_true'); args = parser.parse_args()
+    selected = None  # User-facing restoration always includes the complete snapshot.
     if args.action == 'plan':
         print(json.dumps(dsf_compat.compatibility(inspect(args.file), ROOT, selected), ensure_ascii=False)); return
     if args.action == 'inspect':

@@ -75,9 +75,9 @@ def compatibility(manifest, root, selected=None):
         if unknown_runtime:
             route = None
         rows.append({'id': key, 'label': DEFINITIONS[key][0], 'source': source[key], 'target': target[key],
-                     'selected': key in selected, 'status': 'runtime-check-required' if unknown_runtime else 'compatible' if route == [] else 'migration-required',
+                     'selected': key in selected, 'status': 'runtime-check-required' if unknown_runtime else 'compatible' if route == [] else 'migration-planned' if route is not None else 'migration-required',
                      'canRestore': route is not None, 'migrations': [m[1][0] for m in route] if route is not None else [],
-                     'reason': '需要先检测并核对 DSH 运行时与日志格式，不影响其他组件恢复' if unknown_runtime else '' if route is not None else '需要对应组件的迁移器；尚未注册，不影响其他组件恢复'})
+                     'reason': '需要先检测并核对 DSH 运行时与日志格式，完成后才能恢复整份快照' if unknown_runtime else '' if route is not None else '需要对应组件的迁移器；提供后可恢复整份快照，其他组件无需迁移'})
     dependencies = []
     pair = {'dsh_context', 'bridge_state'}
     if bool(pair & set(selected)) and (not pair.issubset(source) or not pair.issubset(selected)):

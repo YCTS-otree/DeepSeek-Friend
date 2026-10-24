@@ -23,20 +23,29 @@ test('archive relative ages show minutes, hours and combined days with stable in
  assert.equal(p.run('archiveAge("bad",ageNow)'),'时间未知');
 });
 
-test('component picker leaves unsupported context unselected while allowing room restore across app versions',async()=>{
+test('independent compatibility report blocks whole rollback when one format needs a missing migration',async()=>{
  const p=page(),calls=[];
- const rows=[['dsh_context',false],['bridge_state',true],['cognitive_state',true],['room',true]].map(([id,canRestore])=>({id,label:id,canRestore,status:canRestore?'compatible':'migration-required',source:{format:id,version:1},target:{format:id,version:2},migrations:[]}));
- p.respond(body=>{calls.push(body);if(body.action==='restore-options')return{appVersion:'1.9.1',compatibility:{components:rows}};if(body.action==='restore-begin')return{id:'plan',name:'old.DSF',nonce:'step1',step:1,waitMs:3000,components:body.args.components,componentLabels:body.args.components,migrations:[]};return{};});
- await p.run('openArchiveComponents("old.DSF")');
- assert.equal(p.run('archiveComponentInputs[0].box.disabled'),true);assert.equal(p.run('archiveComponentInputs[1].box.disabled'),true);
- p.run('archiveComponentInputs[2].box.checked=false');await p.get('archive-components-confirm').listeners.click();
- assert.deepEqual(calls.find(c=>c.action==='restore-begin').args.components,['room']);assert.match(p.get('archive-confirm-warning').textContent,/恢复范围：room/);assert.equal(p.get('archive-confirm').disabled,true);
+ const rows=[['dsh_context',true],['bridge_state',true],['cognitive_state',false],['room',true]].map(([id,canRestore])=>({id,label:id,canRestore,status:canRestore?'compatible':'migration-required',source:{format:id,version:1},target:{format:id,version:canRestore?1:2},migrations:[]}));
+ p.respond(body=>{calls.push(body);return{appVersion:'1.9.1',compatibility:{canRestore:false,components:rows,dependencies:[]}};});
+ await p.run('openArchiveCompatibility("old.DSF")');
+ assert.equal(p.get('archive-compatibility-confirm').disabled,true);
+ assert.match(p.get('archive-components').children[0].textContent,/兼容，无需迁移/);
+ assert.match(p.get('archive-components').children[2].textContent,/需要迁移器/);
+ await p.get('archive-compatibility-confirm').listeners.click();
+ assert.ok(!calls.some(c=>c.action==='restore-begin'));assert.equal(p.get('archive-components').children.length,4);
 });
 
-test('component picker couples DSH and mapping checkboxes before entering the fixed restore plan',async()=>{
- const p=page();p.respond(()=>({appVersion:'old',compatibility:{components:['dsh_context','bridge_state','room'].map(id=>({id,label:id,canRestore:true,status:'compatible',source:{format:id,version:1},target:{format:id,version:1},migrations:[]}))}}));
- await p.run('openArchiveComponents("old.DSF")');p.run('archiveComponentInputs[0].box.checked=false;archiveComponentInputs[0].box.listeners.change()');
- assert.equal(p.run('archiveComponentInputs[1].box.checked'),false);assert.equal(p.run('archiveComponentInputs[2].box.checked'),true);
+test('whole rollback checks independent versions and plans only the changed memory format migration',async()=>{
+ const p=page(),calls=[];
+ const rows=['dsh_context','bridge_state','cognitive_state','room'].map(id=>({id,label:id,canRestore:true,status:id==='cognitive_state'?'migration-planned':'compatible',source:{format:id,version:1},target:{format:id,version:id==='cognitive_state'?2:1},migrations:id==='cognitive_state'?['memory-v2']:[]}));
+ p.respond(body=>{calls.push(body);if(body.action==='restore-options')return{appVersion:'1.9.1',compatibility:{canRestore:true,components:rows}};return{id:'plan',name:'old.DSF',nonce:'step1',step:1,waitMs:3000,components:rows.map(r=>r.id),componentLabels:rows.map(r=>r.id),migrations:['memory-v2']};});
+ await p.run('openArchiveCompatibility("old.DSF")');assert.equal(p.get('archive-compatibility-confirm').disabled,false);
+ assert.match(p.get('archive-components').children[2].textContent,/恢复时迁移：memory-v2/);
+ await p.get('archive-compatibility-confirm').listeners.click();
+ assert.deepEqual(calls.find(c=>c.action==='restore-begin').args,{name:'old.DSF'});
+ assert.match(p.get('archive-confirm-warning').textContent,/恢复整份快照/);assert.match(p.get('archive-confirm-warning').textContent,/memory-v2/);assert.equal(p.get('archive-confirm').disabled,true);
+ const html=fs.readFileSync('web/index.html','utf8');const report=html.slice(html.indexOf('id="archive-compatibility"'),html.indexOf('id="archive-confirmation"'));
+ assert.ok(!report.includes('type="checkbox"'));
 });
 
 test('group management shows escaped names, persists only the selected switch and disables offline changes',async()=>{

@@ -117,5 +117,30 @@ class ComponentTests(unittest.TestCase):
         changed=self.rewrite(archive,lambda m:m['components'].pop('room'))
         with self.assertRaisesRegex(ValueError,'component-inventory'):dsf.inspect(changed)
 
+    def test_memory_architecture_migration_does_not_require_other_format_bumps(self):
+        root,data=self.fixture();memory=self.seed_cognitive(data)
+        native=root/'.runtime/home/sessions/log.zstd';original_context=native.read_bytes()
+        self_dir=data/'cognitive/self';self_dir.mkdir();(self_dir/'self-state.json').write_text('{"version":"v0.1.0"}')
+        archive=dsf.snapshot(root,data);target=compat.current_components(root);target['cognitive_state']['version']=2
+        (root/'package.json').write_text('{"version":"9.0.0"}')
+        native.write_bytes(b'current context');(data/'cognitive/room/diary.txt').write_text('current room');self.seed_cognitive(data,'current')
+        invoked=[]
+        def migrate(stage):
+            invoked.append('memory-only')
+            with closing(sqlite3.connect(stage/'data/cognitive/cognitive.sqlite')) as db:
+                db.execute("UPDATE memory SET value='old-migrated'");db.commit()
+        with patch.object(compat,'current_components',return_value=target),patch.dict(compat.MIGRATIONS):
+            report=compat.compatibility(dsf.inspect(archive),root)
+            rows={r['id']:r for r in report['components']}
+            self.assertEqual(rows['dsh_context']['status'],'compatible');self.assertEqual(rows['room']['status'],'compatible')
+            self.assertFalse(report['canRestore'])
+            compat.register_migration('cognitive_state','cognitive-state',1,'cognitive-state',2,'memory-architecture-v2',migrate)
+            report=compat.compatibility(dsf.inspect(archive),root)
+            self.assertTrue(report['canRestore']);self.assertEqual(next(r for r in report['components'] if r['id']=='cognitive_state')['status'],'migration-planned')
+            dsf.restore(archive,root,data)
+        self.assertEqual(invoked,['memory-only']);self.assertEqual(self.db_value(memory),'old-migrated')
+        self.assertEqual(native.read_bytes(),original_context);self.assertEqual((data/'cognitive/room/diary.txt').read_text(),'room')
+        self.assertEqual((self_dir/'self-state.json').read_text(),'{"version":"v0.1.0"}')
+
 
 if __name__=='__main__':unittest.main()
