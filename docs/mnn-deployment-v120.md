@@ -1,6 +1,6 @@
 # MNN 1.2.0 正式部署状态（2026-10-24）
 
-原正式 Session `ea38d96b-7c50-4478-87f2-a9bc9512ba5f` 已完成一次 MNN 分段 Dreaming / ACR，已安装到 DSF 1.12.0。MNN 统一图与 Context Pressure Guardian 配置启用；正式 Bridge、DSH 和 QQ 网关继续暂停。
+原正式 Session `ea38d96b-7c50-4478-87f2-a9bc9512ba5f` 已完成一次 MNN 分段 Dreaming / ACR，已安装到 DSF 1.12.0。MNN 统一图与 Context Pressure Guardian 配置启用；正式 Bridge、独立 DSH 和 QQ 网关已按用户指示上线，开始数天实机测试。
 
 ## 正式一次性 Canary
 
@@ -23,8 +23,16 @@
 
 ## 启用建议与实际边界
 
-可以由 WebUI 一键启动进行受控正式试用。默认 85% Soft Rest / 95% Emergency Rest / 60% 恢复水位，空闲 15 分钟、Asia/Shanghai 03:00 夜间整理。只读取同一 MNN 图，没有 Basic 或旧 Dreaming 回退。
+已通过 WebUI 同一启动器的一键启动入口进入受控正式试用。默认 85% Soft Rest / 95% Emergency Rest / 60% 恢复水位，空闲 15 分钟、Asia/Shanghai 03:00 夜间整理。只读取同一 MNN 图，没有 Basic 或旧 Dreaming 回退。
 
 已完成的是正式历史一次性整理、检查点重开、安装与备份；正式渠道下一条真实聊天、跨日在线 Dreaming、Linux 实机及长期高负载仍待观察。独立完整 Profile 和多轮阈值流程的真实合成测试已通过。暂不建议直接认定无人值守长期可靠性已经验收。
 
 遇到故障先暂停 MNN 后台并核对原 Session；修复后可使用 retry。回退仍需三次各至少三秒确认，并再次保存当前状态。安装、路径、日志、兼容性和剩余限制见 [集成文档](mnn-integration.md)，详细结果见 [结构化 Canary 报告](mnn-production-canary-v120.json)。
+
+## 实机测试上线
+
+- 上线核验时间：2026-10-24T23:40:32+08:00（Asia/Shanghai）。
+- 控制台 http://127.0.0.1:3101/；独立 DSH 3088 鉴权和 weixin Preset 检查通过。微信长轮询成功，QQ OneBot online/good=true，MNN Guardian=NORMAL。
+- 上线前 DSF `20261024-233842-416e0253.DSF` 已完整校验（88 文件），摘要 `515e10353a58283475a6f06bfc58051230fc3a3ecb74ab758c3e45c891e01ade`。
+- 原会话和既有群/联系人边界保留；互联网不开放，Self 正式自主提交仍关闭。没有主动发送测试消息，也未重放两条已 discarded 消息。
+- 用户自行开展数天实机测试；当前连接核验不代表跨日长期测试已经通过。

@@ -27,9 +27,23 @@
     "sha256": "d247764eab53404b13b20c575a840b65dbe192dad9f1392886cb4fb7d42e3f9a",
     "files": 88
   },
-  "services": "paused; no live channel messages submitted",
+  "services": "running; hardware test authorized by user",
   "formalProviderConversationAfterRepair": "not submitted; preserve user history",
   "backgroundMultiDayAcceptance": false,
   "automaticSelfCommit": false,
-  "basicFallback": false
+  "basicFallback": false,
+  "goLive": {
+    "checkedAt": "2026-10-24T23:40:32+08:00",
+    "dshPreset": "weixin",
+    "weixinSuccessfulPoll": "2026-10-24T15:40:21.320Z",
+    "qqOnline": true,
+    "qqGood": true,
+    "guardian": "NORMAL",
+    "backup": {
+      "name": "20261024-233842-416e0253.DSF",
+      "sha256": "515e10353a58283475a6f06bfc58051230fc3a3ecb74ab758c3e45c891e01ade",
+      "files": 88
+    },
+    "messagesSubmittedByDeployment": 0
+  }
 }
