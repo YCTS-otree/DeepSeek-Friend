@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_ITEMS = ('src','scripts','tests','dsh','cognitive','docs','web','launcher.py','Self_model.txt','SYS_Prompt.txt','start-web.bat','.gitignore','.gitattributes','README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','package.json','package-lock.json','config.example.json','start.bat','start-dsh.bat','login.bat')
+SOURCE_ITEMS = ('src','scripts','tests','dsh','cognitive','docs','web','vendor','launcher.py','Self_model.txt','SYS_Prompt.txt','start-web.bat','.gitignore','.gitattributes','README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','package.json','package-lock.json','config.example.json','start.bat','start-dsh.bat','login.bat')
 SECRET_NAMES = {'id_rsa','id_ed25519','id_ecdsa','id_dsa','.env','.credentials.yaml','weixin-credentials.json','dsh-connection.json','qq-connection.json','qq-gateway-credentials.json'}
 JUNK = {'.git','.research','Release','Archive','__pycache__','coverage','.cache','.npm','cache','caches','logs-cache','session_projcache'}
 SECRET_FIELDS = {'token','bot_token','access_token','refresh_token','context_token','get_updates_buf','cookie','authorization','password','passwordmd5','api_key','apikey','secret','client_secret','aes','aes_key','filekey','privatekey','private_key','signing_key'}

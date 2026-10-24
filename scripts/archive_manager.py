@@ -262,6 +262,15 @@ class ArchiveManager:
 
     def feature(self, action, args):
         """Return a checkpoint operation only when existing boundaries actually expand."""
+        if action == 'mnn-configure':
+            from scripts.mnn_admin import MnnInstallation
+            manager=MnnInstallation(self.root)
+            if not isinstance(args,dict) or set(args)-{'enabled','paused','tokenizer','guardian','idleMinutes','dreamingTime','timezone'}:
+                raise ArchiveError('mnn-config-invalid')
+            if args.get('enabled') is True and not manager.status()['enabled']:
+                try:manager.verify_acceptance();manager.verify_code()
+                except ValueError as error:raise ArchiveError(str(error)) from None
+            with self.c.lock:return self.begin('feature',{'action':action,'changes':args})
         if action not in ('internet-configure', 'qq-configure', 'qq-group-configure'):
             return None
         if action == 'qq-group-configure':
@@ -310,9 +319,12 @@ class ArchiveManager:
                     current = dsf.snapshot(self.root, data, reason='before-' + args['action'] if op['kind'] == 'feature' else 'manual-web')
                     dsf.inspect(current)
                     op['result'] = {'archive': current.name}
+                    if op['kind']=='feature' and args['action']=='mnn-configure':
+                        from scripts.mnn_admin import MnnInstallation
+                        op['result']['value']=MnnInstallation(self.root).configure(args['changes'],current)
             op['progress'] = '恢复原来运行的项目服务'
             self.resume(before); stopped = False
-            if op['kind'] == 'feature':
+            if op['kind'] == 'feature' and args['action']!='mnn-configure':
                 op['progress'] = '应用已完成归档的功能设置'
                 deadline = self.clock() + 40
                 if before['bridge']:
@@ -332,7 +344,7 @@ class ArchiveManager:
             self.c._log('launcher.archive-completed')
         except Exception as e:
             code = str(e)
-            op.update(state='failed', error=code if re.fullmatch(r'(?:dsf|qq|dsh|session|launcher)-[a-z0-9-]+', code) else 'dsf-operation-failed', progress='已停止操作')
+            op.update(state='failed', error=code if re.fullmatch(r'(?:mnn|dsf|qq|dsh|session|launcher)-[a-z0-9-]+', code) else 'dsf-operation-failed', progress='已停止操作')
             self.c._log('launcher.archive-failed', op['error'])
         finally:
             if stopped:

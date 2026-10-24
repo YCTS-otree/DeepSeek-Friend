@@ -30,7 +30,8 @@ async function main() {
   if (command !== 'start') throw new Error('usage: node scripts/dsh.js setup|start [--open]');
   if (!fs.existsSync(installed)) throw new Error('dsh-not-installed; run npm run dsh:setup');
   if (JSON.parse(fs.readFileSync(installed, 'utf8')).version !== expectedVersion) throw new Error('dsh-version-mismatch');
-  const c = loadConfig(); const home = path.join(runtime, 'home');
+  const c = loadConfig(); const home = path.resolve(process.env.DS_FRIEND_DSH_HOME??path.join(runtime,'home'));
+  if(!home.startsWith(path.resolve(root)+path.sep))throw Error('runtime-path-invalid');
   // A second wrapper must never adopt or overwrite the credentials of an occupied port.
   const { createServer } = await import('node:net');
   await new Promise((resolve, reject) => {
@@ -53,7 +54,7 @@ async function main() {
     '--host', '127.0.0.1', '--port', new URL(c.dsh.baseUrl).port, '--no-open'],
   { cwd: c.dsh.cwd, env, stdio: [process.env.BRIDGE_LAUNCHER === '1' ? 'ignore' : 'inherit', 'pipe', 'pipe'], windowsHide: true });
   let launchUrl; let stopping = false;
-  const stop = () => { stopping = true; child.kill(); };
+  const stop = () => { stopping = true; if(process.platform==='win32'&&child.exitCode===null&&child.pid)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else child.kill(); };
   const open = async () => {
     if (!launchUrl) return;
     const opener = await import(pathToFileURL(path.join(runtime, 'node_modules/open/index.js')).href);

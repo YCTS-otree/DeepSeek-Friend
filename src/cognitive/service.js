@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { CognitiveStore, budget, clean, digest } from './store.js';
 import { BridgeError, backoff, log, sleep } from '../util.js';
 import { senderActor } from '../contacts.js';
+import { mnnSettings } from '../mnn/client.js';
 
 export function localClock(now, timezone) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now)).map(x => [x.type, x.value]));
@@ -154,6 +155,7 @@ export class CognitiveService {
     }
   }
   async tick() {
+    if(mnnSettings(this.store.dir.endsWith(path.join('testing','cognitive'))?path.dirname(path.dirname(this.store.dir)):path.dirname(this.store.dir)).enabled)return;
     if (this.running || this.signal.aborted) return;
     this.schedule();
     const task = this.store.db.prepare("SELECT * FROM tasks WHERE state IN ('pending','running','retry') AND retry_at<=? AND attempts<? ORDER BY created LIMIT 1").get(this.now(), this.config.maxAttempts);

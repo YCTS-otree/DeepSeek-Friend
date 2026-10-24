@@ -17,7 +17,7 @@ export function publicEvent(event) {
     case 'turn/start': return { turn: d.turn };
     case 'turn/end': return { turn: d.turn, reason: { kind: d.reason?.kind,
       ...(/^[A-Z][A-Z0-9_]{0,63}$/.test(d.reason?.error?.code ?? '') ? { error: { code: d.reason.error.code } } : {}) } };
-    case 'user/message': return { source: { kind: d.source?.kind, rpcId: d.source?.rpcId } };
+    case 'user/message': return { source: { kind: d.source?.kind, rpcId: d.source?.rpcId, ...(d.source?.resumesRpcId?{resumesRpcId:d.source.resumesRpcId}:{}) } };
     case 'assistant/message': return { turn: d.turn, text: (d.message?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n') };
     case 'tool/call': return { turn: d.turn, callId: d.callId, name: d.name, arguments: d.arguments };
     case 'approval/asked': return { id: d.id, callId: d.callId, toolName: d.toolName, reason: d.reason };
@@ -62,7 +62,7 @@ export class Engine {
     dsh.on('remote', frame => {
       if (frame.event === 'api-session/error') {
         const job = store.active(frame.args?.[0]);
-        if (job) { store.updateJob(job.id, 'review', 'dsh-agent-error'); this.cognition(job.session)?.idle(job.session); store.reply(job, 'DSH Agent 发生异常。请使用 /status 查看，或 /cancel 停止后重试。', 'agent-error:' + job.id); }
+        if (job && !this.mnnResting(frame.args?.[0])) { store.updateJob(job.id, 'review', 'dsh-agent-error'); this.cognition(job.session)?.idle(job.session); store.reply(job, 'DSH Agent 发生异常。请使用 /status 查看，或 /cancel 停止后重试。', 'agent-error:' + job.id); }
       }
     });
   }
@@ -118,10 +118,11 @@ export class Engine {
       this.finish(sid);
     });
   }
+  mnnResting(sid) {const state=this.runtime?.channelSettings('mnn-pressure:'+sid).state;return state&&state!=='NORMAL';}
   finish(sid) {
     const job = this.store.active(sid); if (!job) return;
     const events = this.store.db.prepare('SELECT * FROM events WHERE session=? ORDER BY seq').all(sid).map(e => ({ ...e, data: JSON.parse(e.data) }));
-    const user = events.find(e => e.type === 'user/message' && e.data.source?.rpcId === job.request_id);
+    const user = events.filter(e => e.type === 'user/message' && (e.data.source?.rpcId === job.request_id||e.data.source?.resumesRpcId === job.request_id)).at(-1);
     if (!user) return;
     const start = events.filter(e => e.type === 'turn/start' && e.seq < user.seq).at(-1);
     if (!start) throw new BridgeError('dsh-turn-missing');
@@ -131,6 +132,7 @@ export class Engine {
     if (!end) return;
     const texts = events.filter(e => e.type === 'assistant/message' && e.data.turn === turn && e.seq > user.seq && e.seq < end.seq).map(e => e.data.text).filter(Boolean);
     const reason = end.data.reason?.kind;
+    if(['blocked','error'].includes(reason)&&this.mnnResting(sid))return;
     let text = texts.join('\n\n');
     if (reason !== 'completed') text = 'DSH 本轮未正常完成（' + (['aborted', 'blocked', 'interrupted', 'error', 'failed'].includes(reason) ? reason : 'unknown') + '）。' + (text ? '\n\n' + text : '');
     if (!text) text = 'DSH 已结束本轮，未产生可发送的文本。';
@@ -347,7 +349,7 @@ export class Engine {
       this.dsh.releaseQuestion?.(p.id);
     }
     for (const j of this.store.db.prepare("SELECT * FROM jobs WHERE account=? AND state='waiting' AND updated<?").all(this.account.accountId, now - this.config.dsh.turnTimeoutMs)) {
-      if (this.explicit) continue; // Continuous work is not a cumulative token/time budget.
+      if (this.explicit||this.mnnResting(j.session)) continue; // Continuous work is not a cumulative token/time budget.
       this.store.updateJob(j.id, 'review', 'turn-timeout');
       await this.dsh.rpc('session/cancel', { sessionId: j.session }, this.signal).catch(() => {});
       this.cognition(j.session)?.idle(j.session);
@@ -364,7 +366,7 @@ export class Engine {
         this.store.updateJob(job.id,job.state==='submitting'?'review':'done',job.state==='submitting'?'qq-group-disabled-admission-unknown':'qq-group-disabled');continue;
       }
       const control = isCommand(JSON.parse(job.payload).text);
-      if (!control && this.runtime?.settings().paused) continue;
+      if (!control && (this.runtime?.settings().paused||this.mnnResting(key))) continue;
       if (this.testMaintenance && this.store.session(key)?.kind === 'test') continue;
       const active = this.store.active(key);
       if (!control && active && active.id !== job.id) { if (this.explicit) this.runtime.flag(key, 'preempt'); continue; }

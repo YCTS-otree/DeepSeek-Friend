@@ -318,3 +318,8 @@ API interoperability was researched from upstream commit `3420f0b76d7dc0ac92cde1
 ## Private developer exchange package (v1.8.1)
 
 The optional friend edition includes the locally installed, unmodified NapCat 4.18.41 application and existing dependency binaries for private non-commercial development exchange. The source is https://github.com/NapNeko/NapCatQQ (copyright Mlikiowa); its complete Limited Redistribution License is included in docs/licenses/NapCat-LICENSE.txt. This edition does not relicense NapCat or bundled dependencies under MIT. Existing dependency license files are retained. Runtime credentials, signing keys and native account data are excluded. Standard source editions continue to omit runtime binaries.
+
+
+## DSF-MNN 1.2.0
+
+维护者授权将相邻 DSF_MNN 项目集成到 DSF。来源基线 7fcccbc，集成提交 07621a4（初始集成 cec5487）；逐文件摘要见 vendor/dsf-mnn/SOURCE.json。MNN 自身代码许可待维护者决定，不自动套用本仓库 MIT。第三方与算法归属见 vendor/dsf-mnn/THIRD_PARTY_NOTICES.md；未重分发官方 tokenizer、API 凭证或 DSH runtime。

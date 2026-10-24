@@ -134,7 +134,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.value(),'old')
 
     def test_one_missing_component_migration_blocks_whole_restore_before_maintenance(self):
-        target=dsf.dsf_compat.current_components(self.root);target['cognitive_state']['version']=2
+        target=dsf.dsf_compat.current_components(self.root);target['cognitive_state']['version']=3
         with patch.object(dsf.dsf_compat,'current_components',return_value=target):
             report=self.m.command('restore-options',{'name':self.archive.name})['compatibility']
             rows={r['id']:r for r in report['components']}

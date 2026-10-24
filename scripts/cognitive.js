@@ -8,6 +8,7 @@ import { CognitiveStore } from '../src/cognitive/store.js';
 import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import { exportScope, archiveMemory, forget, cleanBridgeHistory } from '../src/cognitive/privacy.js';
+import {mnnSettings,MnnClient} from '../src/mnn/client.js';
 
 const [command = 'help', scope, value] = process.argv.slice(2);
 if (command === 'help') {
@@ -15,11 +16,17 @@ if (command === 'help') {
 } else {
   let release; let store;
   try {
-    const c = loadConfig(); secureDirectory(c.dataDir); release = dataLock(c.dataDir);
+    const c = loadConfig(); const mnn=mnnSettings(c.dataDir);
+    if(mnn.enabled&&!['status','self','history','query','raw','trace'].includes(command))throw new Error('cognitive-mnn-maintenance-required');
+    secureDirectory(c.dataDir); release = dataLock(c.dataDir);
     store = new CognitiveStore(path.join(c.dataDir, 'cognitive'), c.cognitive);
     store.db.exec('CREATE TABLE IF NOT EXISTS bridge_receipts(job TEXT PRIMARY KEY,scope TEXT NOT NULL);');
     let result;
-    if (command === 'status') result = { scopes: store.db.prepare('SELECT * FROM scopes').all(), tasks: store.db.prepare('SELECT id,scope,kind,day,state,attempts,error FROM tasks ORDER BY created DESC LIMIT 30').all() };
+    if(mnn.enabled&&['query','raw','trace'].includes(command)){
+      const client=new MnnClient(path.join(c.dataDir,'cognitive/mnn'),mnn);
+      try{result=await client.call(command==='trace'?'trace':'recall',command==='trace'?{id:value}:{query:value??''});}finally{client.close();}
+    }
+    else if (command === 'status') result = { mnn,scopes: store.db.prepare('SELECT * FROM scopes').all(), tasks: mnn.enabled?[]:store.db.prepare('SELECT id,scope,kind,day,state,attempts,error FROM tasks ORDER BY created DESC LIMIT 30').all() };
     else if (command === 'self') result = store.visibleSelf(scope);
     else if (command === 'history') result = store.history(scope);
     else if (command === 'query') result = store.retrieve(scope, value ?? '');
@@ -63,7 +70,7 @@ if (command === 'help') {
     } else throw new Error('cognitive-command-unknown');
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
-    const code = typeof error.code === 'string' && /^[a-z0-9-]+$/.test(error.code) ? error.code : /^cognitive-[a-z-]+$/.test(error.message ?? '') ? error.message : 'cognitive-maintenance-failed';
+    const code = typeof error.code === 'string' && /^[a-z0-9-]+$/.test(error.code) ? error.code : /^(?:cognitive|mnn)-[a-z-]+$/.test(error.message ?? '') ? error.message : 'cognitive-maintenance-failed';
     console.error(JSON.stringify({ code })); process.exitCode = 1;
   } finally { store?.close(); release?.(); }
 }

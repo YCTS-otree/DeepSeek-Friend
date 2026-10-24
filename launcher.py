@@ -314,6 +314,9 @@ class Controller:
 
     def sessions(self, action, args=None):
         with self.session_commands_lock:
+            if action=='mnn-status':
+                from scripts.mnn_admin import MnnInstallation
+                return MnnInstallation(self.root).status()
             if isinstance(args, dict):
                 checkpoint = self.archives.feature(action, args)
                 if checkpoint:

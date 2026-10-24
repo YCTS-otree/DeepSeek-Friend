@@ -313,6 +313,16 @@ test('a no-op does not rewrite readable Self files or their modification time', 
   const file = path.join(f.dir, 'self/SELF_MODEL.md'); const before = fs.statSync(file).mtimeMs;
   f.store.mirror(scope); assert.equal(fs.statSync(file).mtimeMs, before);
 });
+test('MNN context uses native user-context without rescanning memory templates or exposing Self commits',async t=>{
+  const f=fixture(t),scope=f.store.scope(),agent={id:'mnn-braces'};f.store.bind(scope,agent.id,'模板');
+  const native=new Context(),fork=native.plugin(SystemPrompt,{});await fork;t.after(()=>fork.dispose());
+  const tools=new Map(),mnn={client:{call:async()=>({text:'memory literal {{unregistered_secret}}'})},associations:new Map()};
+  installCognitive({systemPrompt:native.systemPrompt,tools:{register:tool=>tools.set(tool.name,tool)},on:(...a)=>native.on(...a)},f.store,cognitiveConfig({}),{core:'trusted-core',mnn});
+  const assembled=await native.systemPrompt.assemble({agent,scope:agent});
+  assert.match(renderContextSnapshot(assembled),/memory literal \{\{unregistered_secret\}\}/);
+  assert.ok(!renderPrompt(assembled).includes('memory literal'));assert.ok(tools.has('memory_recall'));
+  assert.ok(!tools.has('self_model_commit'));assert.ok(!tools.has('self_model_rollback'));
+});
 test('missed nightly jobs are durably caught up by local calendar date without forcing self changes', t => {
   const f = service(t); f.advance(3 * 86400000 + 16 * 60000); f.s.schedule();
   const days = f.store.db.prepare("SELECT day FROM tasks WHERE kind='dream' ORDER BY day").all().map(r => r.day);

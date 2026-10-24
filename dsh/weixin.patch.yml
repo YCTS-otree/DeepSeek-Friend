@@ -1,3 +1,12 @@
+- id: tool-result-pruner
+  disabled: true
+- id: image-offload
+  disabled: true
+# MNN owns cognitive compaction. Disable inherited Basic; no fallback.
+- id: compaction-basic
+  disabled: true
+- id: command-compact
+  disabled: true
 # Only applied to this project's independent DSH_HOME. No working DSH files are changed.
 - id: agent-preset-registry
   config:
@@ -23,6 +32,8 @@
               includeRuntimeContext: true
           - id: cognitive
             name: __COGNITIVE_PLUGIN__
+            isolate:
+              compaction: true
           - id: questions
             name: '@deepseek-ai/dsh-tool-ask-user'
             config:
@@ -38,6 +49,8 @@
             name: __WEIXIN_POLICY__
           - id: cognitive
             name: __COGNITIVE_PLUGIN__
+            isolate:
+              compaction: true
             config:
               test: true
           - id: questions
@@ -63,5 +76,7 @@
               includeRuntimeContext: false
           - id: cognitive-worker
             name: __COGNITIVE_PLUGIN__
+            isolate:
+              compaction: true
             config:
               worker: true

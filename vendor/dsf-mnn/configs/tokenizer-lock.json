@@ -1,0 +1,8 @@
+{
+  "modelFamily": "DeepSeek v4",
+  "provenance": "frozen 7fcccbc recovery tokenizer assets; no download",
+  "files": {
+    "tokenizer.json": "89085f12ef79460ac5f66d1119325ddfc694b4ab209d80bbd81d35f081dc9614",
+    "tokenizer_config.json": "841f8cf146e3f0ad1082594a31f68ecf7608c20467ef355081333d85bbaeb1cb"
+  }
+}

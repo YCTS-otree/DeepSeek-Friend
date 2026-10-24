@@ -231,7 +231,27 @@ async function loadRuntime() {
   if (!settingsDirty) { $('reasoning').value = data.settings.reasoningEffort; $('max-tokens').value = data.settings.maxTokens;
     $('continue-delay').value = data.settings.continueDelayMs; $('continuous').checked = data.settings.continuous; $('paused').checked = data.settings.paused; }
   $('runtime-jobs').textContent = JSON.stringify({ model: data.settings.name, paused: data.settings.paused, tasks: data.jobs, contexts: data.contexts, deliveries: data.deliveries }, null, 2);
+  await loadMnn();
 }
+async function loadMnn(){
+  const data=await sessionRequest('mnn-status');
+  $('mnn-state').textContent=!data.enabled?'尚未启用：先完成隔离验收与恢复演练。':data.paused?'MNN 后台已暂停；仍使用同一记忆网络，不切回旧 Dreaming。':'MNN 已启用：85% / 95% 压力保护运行中。';
+  $('mnn-details').textContent=JSON.stringify(data,null,2);
+  if(!$('mnn-form').dataset.loaded){
+    $('mnn-tokenizer').value=data.tokenizer??'';$('mnn-timezone').value=data.timezone??'Asia/Shanghai';$('mnn-time').value=data.dreamingTime??'03:00';$('mnn-idle').value=data.idleMinutes??15;
+    for(const [id,key,fallback] of [['soft','soft',.85],['hard','hard',.95],['watermark','resume',.60]])$('mnn-'+id).value=Math.round((data.guardian?.[key]??fallback)*100);
+    $('mnn-form').dataset.loaded='true';
+  }
+  $('mnn-pause').disabled=!data.enabled||data.paused;$('mnn-resume').disabled=!data.enabled||!data.paused;$('mnn-enable').disabled=!!data.enabled;
+}
+$('mnn-form').addEventListener('submit',async e=>{
+  e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;
+  try{
+    await sessionRequest('mnn-configure',{tokenizer:$('mnn-tokenizer').value.trim(),guardian:{soft:Number($('mnn-soft').value)/100,hard:Number($('mnn-hard').value)/100,resume:Number($('mnn-watermark').value)/100},idleMinutes:Number($('mnn-idle').value),dreamingTime:$('mnn-time').value,timezone:$('mnn-timezone').value.trim()});
+    $('mnn-notice').textContent='设置已保存，维护前 DSF 已完整校验。';delete $('mnn-form').dataset.loaded;await loadMnn();
+  }catch(error){failNotice('mnn-notice',error);}finally{button.disabled=false;}
+});
+for(const [id,changes] of [['mnn-enable',{enabled:true,paused:false}],['mnn-pause',{enabled:false}],['mnn-resume',{enabled:true,paused:false}]])$(id).addEventListener('click',async()=>{try{const tokenizer=$('mnn-tokenizer').value.trim();await sessionRequest('mnn-configure',{...changes,...(tokenizer?{tokenizer}:{})});$('mnn-notice').textContent='已保存；维护前 DSF 已完整校验。';await loadMnn();}catch(e){failNotice('mnn-notice',e);}});
 function showPrompt() {
   if (!promptData) return;
   const name = $('prompt-source').value || 'core', value = promptData[name];

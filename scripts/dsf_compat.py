@@ -5,7 +5,7 @@ from collections import deque
 DEFINITIONS = {
     'dsh_context': ('DSH 上下文与附件', 'dsh-session', None),
     'bridge_state': ('桥接、聊天与会话映射', 'bridge-state', 1),
-    'cognitive_state': ('长期记忆与 Self Model（原子组）', 'cognitive-state', 1),
+    'cognitive_state': ('长期记忆与 Self Model（原子组）', 'cognitive-state', 2),
     'room': ('小房间', 'room-files', 1),
     'prompts': ('核心 Prompt', 'prompt-files', 1),
     'test_state': ('测试记忆与资源', 'test-state', 1),
@@ -102,3 +102,17 @@ def apply_migrations(manifest, root, selected, stage):
 for _component, (_label, _format, _version) in DEFINITIONS.items():
     if _component != 'dsh_context':
         register_migration(_component, _format, 0, _format, 1, 'legacy-v1-component-metadata', lambda _stage: None)
+
+def migrate_cognitive_to_mnn(stage):
+    """Stage-only conversion; old Self/history are untouched, MNN starts paused."""
+    from pathlib import Path
+    import sys
+    legacy=stage/'data/cognitive/cognitive.sqlite'
+    if not legacy.exists():return
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'vendor/dsf-mnn/src'))
+    from dsf_mnn.production import ProductionMemory
+    memory=ProductionMemory(stage/'data/cognitive/mnn')
+    try:memory.legacy_import(legacy)
+    finally:memory.close()
+
+register_migration('cognitive_state','cognitive-state',1,'cognitive-state',2,'legacy-memory-to-shared-mnn',migrate_cognitive_to_mnn)

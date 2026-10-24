@@ -23,7 +23,7 @@ export function installInteraction(ctx, runtime) {
     // the Session, messages, permissions and raw historical events remain intact.
     if (decision.kind === 'enter' && session?.requestHeader?.() && history) {
       const active = ctx.tools.schemas(p.agent), names = new Set(active.map(tool => tool.name));
-      const added = active.some(tool => INTERACTION_TOOLS.includes(tool.name) && !history.tools.some(old => old.name === tool.name && old.deferLoading !== true));
+      const added = active.some(tool => (INTERACTION_TOOLS.includes(tool.name)||['memory_recall','memory_get_evidence'].includes(tool.name)) && !history.tools.some(old => old.name === tool.name && old.deferLoading !== true));
       const eager = history.tools.some(tool => tool.deferLoading !== true && names.has(tool.name));
       if ((!eager || added) && active.some(tool => tool.deferLoading !== true)) return { ...decision, startsRequestSeries: true };
     }

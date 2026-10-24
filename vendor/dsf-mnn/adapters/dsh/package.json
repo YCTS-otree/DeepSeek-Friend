@@ -1,0 +1,10 @@
+{
+  "name": "dsh-compaction-cognitive",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./backend": "./backend.mjs", "./client": "./client.mjs", "./cognitive-engine": "./cognitive-engine.mjs" },
+  "engines": { "node": ">=24" },
+  "peerDependencies": { "@deepseek-ai/dsh-compaction": "0.2.0-rc.2", "@deepseek-ai/dsh-compaction-basic": "0.2.0-rc.2" },
+  "peerDependenciesMeta": { "@deepseek-ai/dsh-compaction-basic": { "optional": true } }
+}
