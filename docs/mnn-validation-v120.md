@@ -11,7 +11,7 @@ DSF 基线 `1ffbc76`，分支 `integration/mnn-v1.2.0`；MNN 基线 `7fcccbc`，
 | 验证 | 结果 |
 | --- | --- |
 | DSF Node 自动测试 | 186 项：183 通过，3 跳过 |
-| DSF Python unittest | 60 通过 |
+| DSF Python unittest | 61 通过 |
 | MNN Python pytest | 66 通过 |
 | MNN 原生 Node 适配器 | 9 通过 |
 | JS/MJS 与 Python 静态检查 | 通过 |
@@ -67,4 +67,6 @@ v1.1 原图 Hybrid MRR 0.2708 低于早期冻结 0.3125 的负面结论未被抹
 
 formal-16e13d42… 因修复后源码与旧 run-manifest 不同而安全停止，未重新提取或写 checkpoint。运行身份现包含实现摘要、提取/重建模式与当前任务，旧目录保持原样；跨模式复用已持久化语义结果和同 Session 历史，两个新增回归均通过。
 
-最终门禁 validation-cdadbb35…：静态、186 项 Node（183 通过、3 跳过）、60 项 Python、66 项 MNN、整份恢复和完整 Profile 真实合成调用全部通过。完整逐轮结果、精确比值和门禁摘要见 [结构化报告](mnn-validation-v120.json)。历史绝对收据路径不被跟随，搬迁恢复测试通过；原始提取证据和旧源码清单未被覆盖。
+最终门禁 validation-f70141e7…：静态、186 项 Node（183 通过、3 跳过）、61 项 Python、66 项 MNN、整份恢复和完整 Profile 真实合成调用全部通过。完整逐轮结果、精确比值和门禁摘要见 [结构化报告](mnn-validation-v120.json)。历史绝对收据路径不被跟随，搬迁恢复测试通过；原始提取证据和旧源码清单未被覆盖。
+
+发布验证曾因 SOURCE 清单收录 pytest 缓存而失败；该自建失败包保留在 .research，未分发。清单已排除所有开发缓存，新增干净源文件清单回归；最终 Git 源码包重新校验全部 vendor 文件。正式运行代码与最后三轮 canary 完全一致。

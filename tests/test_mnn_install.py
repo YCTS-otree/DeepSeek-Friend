@@ -34,6 +34,13 @@ class InstallationTests(unittest.TestCase):
                 self.install.configure({'guardian':guardian},None)
         self.assertFalse(self.install.marker.exists())
 
+    def test_vendor_manifest_contains_only_portable_source_files(self):
+        project=Path(__file__).resolve().parents[1]
+        manifest=MnnInstallation(project).verify_code()
+        self.assertTrue(manifest['files'])
+        for name in manifest['files']:
+            self.assertFalse(any(part.startswith('.') or part=='__pycache__' for part in Path(name).parts),name)
+
     def test_legacy_snapshot_migrates_memories_without_changing_self_or_context_version(self):
         from scripts import dsf
         import sqlite3,zipfile

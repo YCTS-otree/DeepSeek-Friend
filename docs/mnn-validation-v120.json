@@ -4,14 +4,14 @@
   "mnnVersion": "1.2.0",
   "dshVersion": "0.2.0-rc.2",
   "mnnSourceCommit": "07621a4",
-  "acceptanceSHA256": "cb733712a01caaee4d7faa4d6c2c81267d1ec7da6beb17319ee238818b1cee5c",
+  "acceptanceSHA256": "1494e4678a1e52445fa3da839eefa381017fab2391658a188c2d626cfa84f466",
   "tests": {
     "node": {
       "passed": 183,
       "skipped": 3,
       "failed": 0
     },
-    "python": 60,
+    "python": 61,
     "mnnPython": 66,
     "mnnNode": 9
   },

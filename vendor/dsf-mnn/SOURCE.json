@@ -4,10 +4,6 @@
   "origin": "../DSF_MNN",
   "licensing": "MNN maintainer authorization for this integration; see THIRD_PARTY_NOTICES.md; no blanket MIT relicense",
   "files": {
-    ".pytest_cache/.gitignore": "e7c6bb30148cf667606dcd63e7ca77acaa3cfb0c8303bf09e6419e1e1669dc6d",
-    ".pytest_cache/CACHEDIR.TAG": "37dc88ef9a0abeddbe81053a6dd8fdfb13afb613045ea1eb4a5c815a74a3bde4",
-    ".pytest_cache/README.md": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70",
-    ".pytest_cache/v/cache/nodeids": "32fe1e8602e5a87b8c6119e7948d964197f99c8aed44be2e15ba3143d18e8f06",
     "adapters/dsh/audit-recovery.mjs": "123550b6456a8f0adc6ce7069b482b52f4e1fa7f13639b741b6e93f429249b90",
     "adapters/dsh/backend.mjs": "99deb95f042de139bbfb96249ade7ee1ebe6610a6d1c729257f9ed7d5a6c5e8a",
     "adapters/dsh/client.mjs": "2d799bf3015be639f16b32cfc0028e115b10fcaaaa1428a0a7ab3cceb9ec5c63",
