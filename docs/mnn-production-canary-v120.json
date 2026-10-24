@@ -1,0 +1,35 @@
+{
+  "schema": "dsf-mnn-production-canary/1",
+  "success": true,
+  "originalSession": "ea38d96b-7c50-4478-87f2-a9bc9512ba5f",
+  "rawEventsBefore": 3924,
+  "rawEventsAfter": 3928,
+  "originalPrefixEqual": true,
+  "systemPreserved": true,
+  "selfUnchanged": true,
+  "nativeReopen": true,
+  "checkpointClosed": true,
+  "memoryPersisted": true,
+  "carryoverPresent": true,
+  "beforePressure": 0.533753,
+  "afterPressure": 0.035797,
+  "providerInputTokens": 19413,
+  "semanticNodes": 72,
+  "memoryEvents": 5367,
+  "semanticApiUsage": {
+    "apiCallsWithUsage": 12,
+    "inputTokens": 140361,
+    "outputTokens": 22922,
+    "includesRejectedConsolidations": true
+  },
+  "postBackup": {
+    "name": "20261024-231943-966b15a7.DSF",
+    "sha256": "d247764eab53404b13b20c575a840b65dbe192dad9f1392886cb4fb7d42e3f9a",
+    "files": 88
+  },
+  "services": "paused; no live channel messages submitted",
+  "formalProviderConversationAfterRepair": "not submitted; preserve user history",
+  "backgroundMultiDayAcceptance": false,
+  "automaticSelfCommit": false,
+  "basicFallback": false
+}

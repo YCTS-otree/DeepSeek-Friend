@@ -1,0 +1,82 @@
+{
+  "schema": "dsf-mnn-validation-public/1",
+  "dsfVersion": "1.12.0",
+  "mnnVersion": "1.2.0",
+  "dshVersion": "0.2.0-rc.2",
+  "mnnSourceCommit": "07621a4",
+  "acceptanceSHA256": "cb733712a01caaee4d7faa4d6c2c81267d1ec7da6beb17319ee238818b1cee5c",
+  "tests": {
+    "node": {
+      "passed": 183,
+      "skipped": 3,
+      "failed": 0
+    },
+    "python": 60,
+    "mnnPython": 66,
+    "mnnNode": 9
+  },
+  "native": {
+    "run": "native-16c9d4ca-efa6-4a16-9a05-ef66870d0201",
+    "success": true,
+    "rounds": [
+      {
+        "round": 0,
+        "session_id": "703ee9c7-509c-446d-99ea-a4a06214fbbb",
+        "original_prefix_equal": true,
+        "before_ratio": 0.861175537109375,
+        "after_ratio": 0.1714019775390625,
+        "recall_sources": [
+          "dsh-event:52"
+        ],
+        "compactions": 1,
+        "carryover": true
+      },
+      {
+        "round": 1,
+        "session_id": "703ee9c7-509c-446d-99ea-a4a06214fbbb",
+        "original_prefix_equal": true,
+        "before_ratio": 0.972442626953125,
+        "after_ratio": 0.4101104736328125,
+        "recall_sources": [
+          "dsh-event:52"
+        ],
+        "compactions": 2,
+        "carryover": true
+      },
+      {
+        "round": 2,
+        "session_id": "703ee9c7-509c-446d-99ea-a4a06214fbbb",
+        "original_prefix_equal": true,
+        "before_ratio": 0.8694000244140625,
+        "after_ratio": 0.2122039794921875,
+        "recall_sources": [
+          "dsh-event:134"
+        ],
+        "compactions": 3,
+        "carryover": true
+      }
+    ],
+    "sourceUnchanged": true,
+    "reopenAudit": {
+      "session_id": "703ee9c7-509c-446d-99ea-a4a06214fbbb",
+      "prefix_equal": true,
+      "native_reopen": true,
+      "tool_calls": 3,
+      "tool_results": 3,
+      "paired": true,
+      "pending_inputs": 0,
+      "last_turn": "completed",
+      "compactions": 3,
+      "success": true
+    }
+  },
+  "retrieval": {
+    "cases": 8,
+    "budgetBytes": 4096,
+    "baselineCoverage": 0.875,
+    "newCoverage": 0.875,
+    "sourceMRR": 0.5044191919191918,
+    "unresolvedCase": "G5"
+  },
+  "production": "See mnn-deployment-v120.md; isolated success is not production acceptance."
+}

@@ -235,7 +235,7 @@ async function loadRuntime() {
 }
 async function loadMnn(){
   const data=await sessionRequest('mnn-status');
-  $('mnn-state').textContent=!data.enabled?'尚未启用：先完成隔离验收与恢复演练。':data.paused?'MNN 后台已暂停；仍使用同一记忆网络，不切回旧 Dreaming。':'MNN 已启用：85% / 95% 压力保护运行中。';
+  $('mnn-state').textContent=!data.enabled?'尚未启用：先完成隔离验收与恢复演练。':data.paused?'MNN 后台已暂停；仍使用同一记忆网络，不切回旧 Dreaming。':'MNN 已配置启用：服务运行时执行 85% / 95% 压力保护。';
   $('mnn-details').textContent=JSON.stringify(data,null,2);
   if(!$('mnn-form').dataset.loaded){
     $('mnn-tokenizer').value=data.tokenizer??'';$('mnn-timezone').value=data.timezone??'Asia/Shanghai';$('mnn-time').value=data.dreamingTime??'03:00';$('mnn-idle').value=data.idleMinutes??15;

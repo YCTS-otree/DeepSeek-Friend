@@ -1,6 +1,6 @@
 # DeepSeek:Friend
 
-**v1.11.1 · 微信 / QQ ↔ DeepSeek Harness 桥接器与持续认知扩展。Windows 优先。**
+**v1.12.0 · 微信 / QQ ↔ DeepSeek Harness 桥接器与持续认知扩展。Windows 优先。**
 
 DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注、持续记忆、受控 Self 演化和本机控制台；推理、工具执行、MCP 和原生上下文管理交给项目独立的 DSH。当前前台模型为 **DeepSeek-V41-Flash（4.1 Flash）**。
 
@@ -14,6 +14,8 @@ DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注�
 | [分发与打包](docs/distribution.md) | 源码包、保留状态的朋友包、清理与校验 |
 | [部署与故障](docs/operations.md) | 配置、错误、unknown/review 与恢复 |
 | [版本兼容](docs/compatibility.md) | 真实源码分析与未验证事项 |
+| [MNN 集成与回滚](docs/mnn-integration.md) | 统一记忆、压力小憩、安装门禁与故障恢复 |
+| [MNN 验收记录](docs/mnn-validation-v120.md) | 真实三轮小憩、回归、检索负面结果与限制 |
 | [认知架构](docs/cognitive-architecture.md) | 空闲提取、Dreaming、Self 与来源校验 |
 | [QQ 群管理](docs/qq-groups-v18.md) | 按群启停、作者身份与群收件人 |
 | [DSF 备份与回滚](docs/dsf-format.md) | 独立格式版本检查、整份恢复与迁移、三次延时确认 |
@@ -24,13 +26,13 @@ DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注�
 - QQ 好友私聊、白名单群聊、图片与收藏表情、合并转发文字/图片；转发视频跳过。语音/文件未实现。
 - 所有渠道共用 WebUI 选定的一个当前正式 Session、统一 Self、记忆、日记和目标；正式会话归档不删除，独立测试空间可清空。
 - 代码标注真实发送者，昵称/备注/群名片不授予身份；QQ 号 `3626097226` 才是可信 OTREE，群回复发回原群。
-- 空闲 15 分钟提取经历，Asia/Shanghai 03:00 Dreaming。Self 更新须有证据且允许 no-op；原始 v0.1.0 永久保留，小房间独立持久化。
+- MNN 统一记忆网络、空闲 15 分钟语义提取、Asia/Shanghai 03:00 分段 LLM Dreaming / ACR；85% / 95% 原生 Token 压力保护在原 Session 安全小憩，无 Basic 回退。Self 版本保留，MNN 正式自主提交暂不开放。
 - 一轮多次发送、回复后持续思考、本机 reasoning/私有笔记、自主小闹钟及主动联系授权对象。单次输出上限防止报错，不设累计步数/Token 截止。
 - 本机 WebUI 分页管理二维码、服务、会话、群聊、思考深度、Prompt、通讯录、小房间与 DSF 归档。互联网不对 Agent 展示，操作者仅能测试受限域名过滤。
 
 ## 环境与首次部署
 
-需要 **Node.js 24+、npm、Python 3.10+ 标准库**；无需 pip、Flask、新虚拟环境或容器。已验证 Windows / Node 24.19.0 / Python 3.10。DSH 固定 **0.2.0-rc.2**，QQ 可选 Windows NapCat **4.18.41**。
+基础桥接需要 **Node.js 24+、npm、Python 3.10+ 标准库**。MNN 另外使用现有 tokenizers、Jinja2 和经摘要校验的官方词表，测试使用 pytest；缺少依赖时先由操作者决定安装范围，不自动安装新运行时。已验证 Windows / Node 24.19.0 / Python 3.10。DSH 固定 **0.2.0-rc.2**，QQ 可选 Windows NapCat **4.18.41**。
 
 ```powershell
 npm ci --cache .research/npm-cache

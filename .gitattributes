@@ -4,4 +4,4 @@
 /cognitive/CORE.md -text whitespace=-trailing-space,cr-at-eol
 /cognitive/bootstrap/** -text whitespace=-trailing-space,cr-at-eol
 # SOURCE.json authenticates vendored bytes; never rewrite them during checkout.
-/vendor/dsf-mnn/** -text
+/vendor/dsf-mnn/** -text whitespace=-trailing-space,cr-at-eol
