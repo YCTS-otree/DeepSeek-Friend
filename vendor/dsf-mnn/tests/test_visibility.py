@@ -5,6 +5,7 @@ from dsf_mnn.visibility import purge_diagnostics
 from dsf_mnn.model import MemoryError
 from dsf_mnn.model import Event,Node
 from dsf_mnn.formation import Formation
+from dsf_mnn.semantic import normalize_export,semantic_units
 
 def test_purge_removes_preexisting_derived_nodes_indexes_and_evidence(tmp_path):
     m=ProductionMemory(tmp_path,provider=Provider(),counter=Counter())
@@ -56,3 +57,13 @@ def test_dreaming_after_private_reconstruction_reports_noop_for_host_pressure_va
         assert result['compactionNoop']=='acr-no-safe-rolling-range' and 'plan' not in result
         assert m.dreaming(source,day='2026-10-25')==result
     finally:m.close()
+
+def test_diagnostic_tool_results_hide_the_matching_call_without_creating_orphans():
+    source=export();seq=len(source['events']);call={'type':'tool-call','callId':'c','name':'room_read','arguments':'{}'}
+    message={'role':'assistant','content':[call]}
+    source['events'].append({'seq':seq,'type':'assistant/message','time':1792400000000,'data':{'message':message}});source['projected'].append({'seq':seq,'message':message})
+    source['events'].append({'seq':seq+1,'type':'tool/call','time':1792400000001,'data':{'callId':'c','name':'room_read','arguments':'{}'}});source['projected'].append({'seq':seq+1,'message':None})
+    result={'role':'tool','callId':'c','content':[{'type':'text','text':'CONTEXT_WINDOW_EXCEEDED'}]}
+    source['events'].append({'seq':seq+2,'type':'tool/result','time':1792400000002,'data':{'message':result}});source['projected'].append({'seq':seq+2,'message':result})
+    records=normalize_export(source)
+    assert all(r['metadata'].get('operator_only') for r in records[-3:]);semantic_units(source,records)

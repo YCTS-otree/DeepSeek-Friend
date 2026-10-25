@@ -11,6 +11,9 @@ import {pressure} from '../src/mnn/guardian.js';
 const root=fileURLToPath(new URL('..',import.meta.url));
 if(!process.argv.includes('--authorized-offline'))throw Error('mnn-offline-gate-required');
 const [sid,data,tokenizer,backup]=process.argv.slice(2).filter(x=>!x.startsWith('--'));
+const sessionsOption=process.argv.find(x=>x.startsWith('--sessions-root='));
+const sessionsRoot=sessionsOption?path.resolve(sessionsOption.slice('--sessions-root='.length)):path.join(root,'.runtime/home/sessions');
+if(sessionsOption&&!sessionsRoot.startsWith(path.join(root,'.research')+path.sep))throw Error('mnn-stage-path-invalid');
 if(!/^[a-f0-9-]{36}$/.test(sid??'')||!data||!tokenizer||!backup)throw Error('mnn-repair-arguments');
 const run=path.join(root,'.research/mnn-v120/formal-'+randomUUID());await fs.mkdir(run,{recursive:true});
 const report={schema:'dsf-mnn-formal-repair/1',session_id:sid,backup,run,started:new Date().toISOString(),prompt_submissions:0,external_tool_executors:0};
@@ -20,7 +23,7 @@ async function selfDigest(){const files=await fs.readdir(selfDir,{recursive:true
 let kernel,mnn;
 try{
  report.self_before=await selfDigest();
- kernel=await createNativeKernel(path.join(root,'.runtime/node_modules'),path.join(root,'.runtime/home/sessions'));
+ kernel=await createNativeKernel(path.join(root,'.runtime/node_modules'),sessionsRoot);
  const handle=await kernel.persistence.open(sid,'read');let before,original;
  try{const stored=await handle.read();before={events:structuredClone(stored.events)};original=kernel.sessionModule.Session.create(sid,stored.events,handle.header,handle.inheritedEventCount);}finally{await handle.close();}
  report.events_before=before.events.length;report.prefix_digest=hash(before.events);
@@ -51,6 +54,8 @@ try{
  const result=await mnn.rest(agent);if(result?.state!=='NORMAL')throw Error(result?.error??'mnn-repair-did-not-complete');
  await kernel.ctx.sessions.flush(agent.session);
  const after=exportSession(agent.session);
+ const visibleCheckpoint=after.events.filter(e=>e.type==='user/message'&&e.seq>=before.events.length&&e.data.source?.kind==='compact-checkpoint').map(e=>e.data.content?.filter(b=>b.type==='text').map(b=>b.text).join('\n')).join('\n');
+ report.visible_checkpoint_clean=!/CONTEXT_WINDOW_EXCEEDED|recorded_runtime_error|dsf-mnn-acr|source_event_range|original complete system|"run_id"|上下文.{0,8}(?:修复|重建|超限)/i.test(visibleCheckpoint);
  report.events_after=after.events.length;report.prefix_equal=isDeepStrictEqual(after.events.slice(0,before.events.length),before.events);
  if(process.argv.includes('--private-context')){
   const visible=JSON.stringify(agent.session.deriveMessages().filter(m=>m.role!=='system'));
@@ -63,13 +68,13 @@ try{
  const prepared=await mnn.client.call('prepared',{run_id:report.work.run_id});
  report.memory_persisted=prepared.memoryPersisted;report.carryover_present=Boolean(prepared.carryover);report.self_update=prepared.self_update;
  report.self_after=await selfDigest();report.self_unchanged=report.self_after===report.self_before;
- report.success=report.prefix_equal&&report.system_preserved&&report.self_unchanged&&report.memory_persisted&&report.carryover_present&&report.after_pressure.ratio<=.60&&report.pending_before===report.pending_after&&report.private_visible_clean!==false;
+ report.success=report.prefix_equal&&report.system_preserved&&report.self_unchanged&&report.memory_persisted&&report.carryover_present&&report.after_pressure.ratio<=.60&&report.pending_before===report.pending_after&&report.private_visible_clean!==false&&report.visible_checkpoint_clean;
  if(!report.success)throw Error('mnn-formal-postconditions');
 }catch(error){report.success=false;report.error=/^mnn-[-a-z0-9]+$/.test(error.message??'')?error.message:'mnn-formal-repair-failed';await fs.writeFile(path.join(run,'private-failure.json'),JSON.stringify({message:error.message,stack:error.stack}));}
 finally{
  await kernel?.ctx.fiber.dispose();
  if(report.success){
-  const reopened=await createNativeKernel(path.join(root,'.runtime/node_modules'),path.join(root,'.runtime/home/sessions'));
+  const reopened=await createNativeKernel(path.join(root,'.runtime/node_modules'),sessionsRoot);
   try{const handle=await reopened.persistence.open(sid,'read');try{const stored=await handle.read();
    report.native_reopen=hash(stored.events.slice(0,report.events_before))===report.prefix_digest;
    report.checkpoint_closed=stored.events.filter(e=>e.type==='compaction/end').at(-1)?.data.error===undefined;

@@ -15,7 +15,7 @@ export function runtimeResumeSource(rpcId){return {kind:'mnn-runtime',...(typeof
 export function committedRecovery(row,events) {
   if(!['RECOVERY_PENDING','DREAMING','RECONSTRUCTING'].includes(row.state))return false;
   const work=JSON.parse(row.work??'{}');if(!work.run_id)return false;
-  const summary=events.find(e=>e.type==='compaction/summary'&&e.seq>=work.boundary&&e.data.summary?.some(b=>b.text?.includes('"run_id":"'+work.run_id+'"')));
+  const summary=events.find(e=>e.type==='compaction/summary'&&e.seq>=work.boundary&&(e.data.model==='cognitive-dreaming-acr/1:'+work.run_id||e.data.summary?.some(b=>b.text?.includes('"run_id":"'+work.run_id+'"'))));
   return Boolean(summary&&events.some(e=>e.type==='compaction/end'&&e.data.compactionId===summary.data.compactionId&&!e.data.error));
 }
 export function guardianConfig(input = {}) {

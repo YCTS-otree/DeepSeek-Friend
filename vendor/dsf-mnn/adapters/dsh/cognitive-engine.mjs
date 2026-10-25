@@ -55,7 +55,7 @@ export function cognitiveEngineClass({ CompactionEngine, CompactionId, compactCh
         if (this.ctx.tokenMeter.estimateMessage(checkpointMessage) >= shadowedTokenCount) throw Error('mnn-checkpoint-does-not-reduce-context');
         const summaryEvent = session.append('compaction/summary', { ...lifecycle, summary,
           shadowedRange: { start, end }, shadowedSeqs: plan.shadowed_seqs, shadowedTokenCount,
-          provider: 'dsf-mnn', model: 'cognitive-dreaming-acr/1' });
+          provider: 'dsf-mnn', model: 'cognitive-dreaming-acr/1'+((plan.commit_marker??plan.run_id)?':'+(plan.commit_marker??plan.run_id):'') });
         session.append('user/message', checkpointMessage, {
           surfaceOp: { op: 'replace', startSeq: start, endSeq: end }, sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...plan.shadowed_seqs],
         });

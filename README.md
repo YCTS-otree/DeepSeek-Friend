@@ -15,6 +15,7 @@ DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注�
 | [部署与故障](docs/operations.md) | 配置、错误、unknown/review 与恢复 |
 | [仪表板与公网控制台](docs/dashboard-public-privacy.md) | 动态指标、余额、双栈密码登录、维护记录隔离与实测边界 |
 | [对话连续性事故记录](docs/incident-conversation-continuity.md) | 记忆对表达的影响、过度修整原因、修复与长期验收标准 |
+| [接入前基线重新 Dreaming](docs/pre-mnn-rebase-20261025.md) | 弃用旧分支、干净来源、完整替换与投递保护 |
 | [版本兼容](docs/compatibility.md) | 真实源码分析与未验证事项 |
 | [MNN 集成与回滚](docs/mnn-integration.md) | 统一记忆、压力小憩、安装门禁与故障恢复 |
 | [MNN 验收记录](docs/mnn-validation-v120.md) | 真实三轮小憩、回归、检索负面结果与限制 |

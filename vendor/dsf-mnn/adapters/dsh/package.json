@@ -1,6 +1,6 @@
 {
   "name": "dsh-compaction-cognitive",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "type": "module",
   "exports": { "./backend": "./backend.mjs", "./client": "./client.mjs", "./cognitive-engine": "./cognitive-engine.mjs" },

@@ -9,7 +9,7 @@ import hashlib
 from . import MemoryStore, Scope, Event
 from .model import MemoryError, Node, canonical, digest
 from .semantic import SemanticDreaming, normalize_export
-from .acr import AdaptiveContextReconstruction
+from .acr import AdaptiveContextReconstruction,render_checkpoint
 from .recall import Recall, RecallBudget
 from .evidence_recall import EvidenceRecall
 from .association import SpontaneousAssociation, AssociationCue
@@ -124,7 +124,7 @@ class ProductionMemory:
                 reverse={v:k for k,v in lookup.items()}
                 for key in ('original_surface','tail_seqs','shadowed_seqs'):plan[key]=[reverse[n] for n in plan[key]]
                 for key in ('system_head_seq','system_source_seq'):plan[key]=reverse[plan[key]]
-                plan['snapshot_digest']=digest(original['events']);plan['run_id']=run_id;plan['checkpoint']['run_id']=run_id;plan['checkpoint_text']=canonical(plan['checkpoint']);result['plan']=plan
+                plan['snapshot_digest']=digest(original['events']);plan['run_id']=run_id;plan['checkpoint']['run_id']=run_id;plan['checkpoint_text']=render_checkpoint(plan['checkpoint']);result['plan']=plan
         self.store.db.execute('INSERT INTO production_runs VALUES(?,?)',(run_id,canonical(result)));self.store.db.execute('PRAGMA wal_checkpoint(FULL)');return result
     def privacy_prepare(self,original,context_tokens=500000,output_reserve=8192,region_budgets=None):
         mapped,records,lookup=self.capture(original)
@@ -149,11 +149,11 @@ class ProductionMemory:
         for key in ('original_surface','tail_seqs','shadowed_seqs'):plan[key]=[reverse[n] for n in plan[key]]
         for key in ('system_head_seq','system_source_seq'):plan[key]=reverse[plan[key]]
         identifier=digest(['private-reconstruction',digest(original['events']),implementation_revision()])
-        plan['snapshot_digest']=digest(original['events']);plan['run_id']=identifier;plan['checkpoint']['run_id']=identifier;plan['checkpoint_text']=canonical(plan['checkpoint'])
+        plan['snapshot_digest']=digest(original['events']);plan['run_id']=identifier;plan['checkpoint']['run_id']=identifier;plan['checkpoint_text']=render_checkpoint(plan['checkpoint'])
         if regions:
-            plan['checkpoint']['run_id']='private-stage:'+identifier;plan['checkpoint_text']=canonical(plan['checkpoint'])
+            plan['commit_marker']='private-stage:'+identifier
             regions.sort(key=size)
-            plan['additional_regions']=[{'shadowed_seqs':[reverse[q] for q in r],'checkpoint_text':canonical({'run_id':identifier,'note':'继续。'}) if i==len(regions)-1 else '继续。'} for i,r in enumerate(regions)]
+            plan['additional_regions']=[{'shadowed_seqs':[reverse[q] for q in r],'checkpoint_text':'继续。','commit_marker':identifier if i==len(regions)-1 else 'private-stage:'+identifier} for i,r in enumerate(regions)]
         folder=self.directory/'runs'/identifier;folder.mkdir(parents=True,exist_ok=True);atomic_json(folder/'history.json',history)
         result={'run_id':identifier,'session_id':original['session_id'],'memoryPersisted':True,'self_update':'noop','carryover':[],'semantic_file':(folder/'history.json').relative_to(self.directory).as_posix(),'plan':plan}
         self.store.db.execute('INSERT OR REPLACE INTO production_runs VALUES(?,?)',(identifier,canonical(result)));self.store.db.execute('PRAGMA wal_checkpoint(FULL)');return result

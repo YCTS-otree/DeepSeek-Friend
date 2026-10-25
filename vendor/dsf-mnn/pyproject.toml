@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dsf-mnn"
-version = "1.2.2"
+version = "1.2.3"
 description = "Evidence-preserving associative memory research core for DSF"
 requires-python = ">=3.10"
 dependencies = []

@@ -46,6 +46,8 @@ def test_dreaming_and_private_reconstruction_keep_exact_recent_exchanges(tmp_pat
         for value in (normal,private):
             recent=value['plan']['checkpoint']['recent_dialogue']
             assert recent and '明天接着做' in json.dumps(recent,ensure_ascii=False)
+            visible=value['plan']['checkpoint_text']
+            for internal in ['run_id','snapshot_digest','source_event_range','self_model','dsf-mnn-acr','provider_verified']:assert internal not in visible
     finally:m.close()
 
 def test_private_notes_reasoning_and_failed_tool_sends_are_not_restored_as_conversation():

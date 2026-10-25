@@ -87,6 +87,25 @@ def normalize_export(export):
                 source_kind='inference';meta['self_read']=True
             meta.update(kind="tool_result", call_id=message.get("callId") or message.get("source", {}).get("callId"))
         records.append({"seq": seq, "id": "dsh-event:" + str(seq), "text": text, "source_kind": source_kind, "observed_at": timestamp, "metadata": meta})
+    # Exclude a diagnostic tool transaction as a whole. Skipping only its call
+    # or only its result would manufacture an orphan for the Dreaming reader.
+    rows={r['seq']:r for r in records};hidden_calls=set();groups=[]
+    for raw in export['events']:
+        message=projected.get(raw['seq']) or {};ids=set()
+        if raw['type']=='assistant/message':ids={b.get('callId',b.get('id')) for b in message.get('content',[]) if b.get('type')=='tool-call'}
+        elif raw['type']=='tool/call':ids={raw['data'].get('callId')}
+        elif raw['type']=='tool/result':ids={message.get('callId') or message.get('source',{}).get('callId')}
+        ids.discard(None)
+        if ids:
+            groups.append((raw['seq'],ids))
+            if rows[raw['seq']]['metadata'].get('operator_only'):hidden_calls.update(ids)
+    changed=True
+    while changed:
+        changed=False
+        for _seq,ids in groups:
+            if ids&hidden_calls and not ids<=hidden_calls:hidden_calls.update(ids);changed=True
+    for seq,ids in groups:
+        if ids&hidden_calls:rows[seq]['metadata']['operator_only']=True;rows[seq]['text']='[operator-only record]';rows[seq]['source_kind']='inference'
     return records
 
 
