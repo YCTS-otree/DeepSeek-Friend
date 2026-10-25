@@ -1,6 +1,8 @@
 # DeepSeek:Friend
 
-**v1.12.0 · 微信 / QQ ↔ DeepSeek Harness 桥接器与持续认知扩展。Windows 优先。**
+**v1.14.1 · MNN 系统应用首版 · 微信 / QQ ↔ DeepSeek Harness。Windows 优先。**
+
+这是 MNN 在 DeepSeek:Friend 中作为正式记忆与上下文整理系统应用的首个发布基线，集成 **MNN 1.3.1**。此前的研究、试接入及修复过程保留在开发历史中；旧架构封存版仍为 v1.10.0。本版具备统一记忆网络、分段 Dreaming / ACR、原 Session 压力小憩、正式来源与数据代际隔离，以及无新经历时的 no-op 保护。发布范围、验证结果和长期观察边界见 [MNN 首版说明](docs/releases/mnn-first-application-v1.14.1.md)。
 
 DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注、持续记忆、受控 Self 演化和本机控制台；推理、工具执行、MCP 和原生上下文管理交给项目独立的 DSH。当前前台模型为 **DeepSeek-V41-Flash（4.1 Flash）**。
 
@@ -11,6 +13,7 @@ DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注�
 | [架构说明](docs/architecture.md) | 进程、模块、数据流、存储与真实 Prompt 角色 |
 | [设计理念](docs/design-philosophy.md) | 统一身份、记忆与证据、可选演化、自由表达与权限 |
 | [架构融合指南](docs/integration-guide.md) | 共同开发的入口、复用顺序与迁移边界 |
+| [后续规划与参考仓库](docs/roadmap.md) | 候选仓库、互联网接入约束与 TODO |
 | [分发与打包](docs/distribution.md) | 源码包、保留状态的朋友包、清理与校验 |
 | [部署与故障](docs/operations.md) | 配置、错误、unknown/review 与恢复 |
 | [MNN 来源隔离与重建](docs/mnn-clean-generation-20261025.md) | 归档回灌原因、永久清理范围、数据代际和实际验收 |
