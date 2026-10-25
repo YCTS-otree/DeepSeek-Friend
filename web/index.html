@@ -1,15 +1,23 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepSeek:Friend · 本地控制台</title><link rel="stylesheet" href="/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepSeek:Friend · 控制台</title><link rel="stylesheet" href="/style.css"></head>
 <body>
 <div class="shell">
-  <header><div class="brand"><span class="mark" aria-hidden="true">D<span>f</span></span><div><strong>DeepSeek:Friend</strong><p>微信、QQ 与 Agent 的连接，从这里开始。</p></div></div><span class="local"><i></i> 仅在本机运行</span></header>
-  <nav class="console-nav" aria-label="控制台页面"><a href="#overview">连接概览</a><a href="#sessions">会话与测试</a><a href="#controls">运行控制</a><a href="#thoughts">思考与闹钟</a><a href="#identity">Prompt 与小房间</a><a href="#channels">QQ 与通讯录</a><a href="#internet">互联网测试</a><a href="#archives">DSF 归档</a></nav>
+  <header><div class="brand"><span class="mark" aria-hidden="true">D<span>f</span></span><div><strong>DeepSeek:Friend</strong><p>微信、QQ 与 Agent 的连接，从这里开始。</p></div></div><span id="access-mode" class="local">正在核对访问模式</span></header>
+  <nav class="console-nav" aria-label="控制台页面"><a href="#overview">仪表板</a><a href="#connections">连接与扫码</a><a href="#sessions">会话与测试</a><a href="#controls">运行控制</a><a href="#thoughts">思考与闹钟</a><a href="#identity">Prompt 与小房间</a><a href="#channels">QQ 与通讯录</a><a href="#internet">互联网测试</a><a href="#archives">DSF 归档</a></nav>
   <main>
     <section class="intro"><div><span class="eyebrow">WEIXIN / QQ × DEEPSEEK HARNESS</span><h1 id="intro-title">让微信，连上你的 Agent。</h1><p id="intro-description">启动服务，用手机微信扫描下方二维码，再回到微信开始对话。</p></div><span id="version" class="version"></span></section>
     <div class="context-bar"><label for="context-session">当前查看</label><select id="context-session"><option value="">尚无会话</option></select><span id="context-note">微信与 QQ 共用当前正式会话</span></div>
     <div id="error" class="error" role="alert" hidden></div>
     <div data-page="overview">
+    <div class="dashboard-head"><div><span class="step">LIVE TELEMETRY</span><h2>运行仪表板</h2></div><div><span id="dashboard-updated" class="chat-note">读取指标中…</span><button id="dashboard-refresh" class="text-button">刷新</button></div></div>
+    <div id="dashboard-alert" class="error" role="status" hidden></div>
+    <div class="metric-grid"><section class="card metric"><span>Agent 状态</span><strong id="dash-agent">—</strong><small id="dash-agent-note">服务与推理暂停分别检查</small></section><section class="card metric"><span>本会话累计 Token</span><strong id="dash-tokens">—</strong><small>DSH 原生用量 · 包含缓存输入</small></section><section class="card metric"><span>今日 Agent Token</span><strong id="dash-today">—</strong><small>上海时区 · 本机已记录的请求</small></section><section class="card metric"><span>API 账户余额</span><strong id="dash-balance">—</strong><small id="dash-balance-note">DeepSeek 官方查询 · 每分钟更新</small></section></div>
+    <div class="dashboard-grid"><section class="card"><div class="activity-head"><div><span class="step">ACTIVE CONTEXT</span><h2>上下文与小憩</h2></div><span id="dash-guardian" class="badge">—</span></div><div class="pressure-number"><strong id="dash-pressure">—</strong><span id="dash-pressure-detail">读取 DSH 原生投影…</span></div><progress id="dash-pressure-bar" max="100" value="0" aria-label="上下文预测占用"></progress><p id="dash-thresholds" class="chat-note">85% 小憩预警 · 95% 紧急保护</p><dl class="dashboard-facts"><div><dt>系统指令 / 工具</dt><dd id="dash-fixed">—</dd></div><div><dt>最近请求输入 / 输出</dt><dd id="dash-last">—</dd></div><div><dt>思考深度 / 单次输出预留</dt><dd id="dash-model">—</dd></div><div><dt>数据来源</dt><dd id="dash-context-source">—</dd></div></dl></section><section class="card"><span class="step">CONNECTIONS</span><h2>服务与消息通道</h2><div id="dash-services" class="dashboard-services"></div><p id="dash-poll" class="chat-note">—</p><a class="text-button" href="#connections">管理连接与扫码 →</a></section></div>
+    <div class="dashboard-grid"><section class="card"><span class="step">TOKEN LEDGER</span><h2>用量明细</h2><dl class="dashboard-facts"><div><dt>未缓存输入</dt><dd id="dash-input">—</dd></div><div><dt>缓存读取 / 写入</dt><dd id="dash-cache">—</dd></div><div><dt>模型输出</dt><dd id="dash-output">—</dd></div><div><dt>后台 Dreaming 累计</dt><dd id="dash-dream-tokens">—</dd></div></dl><p class="chat-note">前台累计仅对应当前查看会话；后台为本机 MNN 收据去重统计，两者分列。不是账户全部费用，不用 Token 推算余额。</p></section><section class="card"><span class="step">MEMORY & WORK</span><h2>持续状态</h2><dl class="dashboard-facts"><div><dt>当前查看会话</dt><dd id="dash-session">—</dd></div><div><dt>待处理任务 / 待投递</dt><dd id="dash-queue">—</dd></div><div><dt>记忆节点 / 来源事件</dt><dd id="dash-memory">—</dd></div><div><dt>待响闹钟</dt><dd id="dash-alarms">—</dd></div></dl></section></div>
+    <section class="card activity"><div class="activity-head"><div><span class="step">运行记录</span><h2>连接动态</h2></div><span id="connection" class="connection">正在连接控制台…</span></div><div id="logs" class="logs" role="log" aria-label="脱敏运行记录"><p class="empty-log">尚无运行记录。启动服务后将在这里显示状态。</p></div></section>
+    </div>
+    <div data-page="connections" hidden>
     <div class="grid overview-grid">
       <section class="card login-card" aria-labelledby="login-title">
         <div class="card-head"><div><span class="step">01 / 微信授权</span><h2 id="login-title">连接你的微信</h2></div><span id="login-badge" class="badge">尚未启动</span></div>
@@ -34,10 +42,9 @@
           <div class="controls"><button id="start" class="button primary" data-action="start">一键启动全部 <span aria-hidden="true">↗</span></button><button id="stop" class="button secondary" data-action="stop" disabled>停止</button></div>
           <button id="open-dsh" class="text-button dsh-link" data-action="open-dsh" disabled>打开 DSH 管理页面 <span aria-hidden="true">↗</span></button>
         </section>
-        <section class="card guide"><span class="step">接下来</span><h2>扫码后，说一声「你好」</h2><p>两张二维码分别用微信、手机 QQ 扫描。QQ 确认后请等待冷静期和初始化结束；两条通道共用当前会话，工具权限仍由独立 DSH 管理。</p><div class="guide-note"><span aria-hidden="true">⌁</span> 工作中的 DSH 与此项目独立运行。</div></section>
+        <section class="card guide"><span class="step">接下来</span><h2>扫码后，说一声「你好」</h2><p>两张二维码分别用微信、手机 QQ 扫描。QQ 确认后请等待初始化结束；两条通道共用当前会话，工具权限仍由独立 DSH 管理。</p><div class="guide-note"><span aria-hidden="true">⌁</span> 工作中的 DSH 与此项目独立运行。</div></section>
       </div>
     </div>
-    <section class="card activity"><div class="activity-head"><div><span class="step">运行记录</span><h2>连接动态</h2></div><span id="connection" class="connection">正在连接控制台…</span></div><div id="logs" class="logs" role="log" aria-label="脱敏运行记录"><p class="empty-log">尚无运行记录。启动服务后将在这里显示状态。</p></div></section>
     </div>
     <div data-page="sessions" hidden>
     <section class="card chat-card" aria-labelledby="chat-title">
@@ -65,7 +72,7 @@
     <section id="archive-confirmation" class="card panel" role="dialog" aria-labelledby="archive-confirm-title" hidden><h2 id="archive-confirm-title">回滚确认</h2><p id="archive-confirm-warning" class="record-view"></p><div class="archive-actions"><button id="archive-confirm" class="button primary" type="button" disabled>确认回滚</button><button id="archive-cancel" class="button secondary" type="button">取消回滚</button></div></section>
     <section class="card panel"><h2>备份回收站</h2><p class="chat-note">这里只移入回收站，随时可以还原备份文件，不提供永久删除。</p><div id="archive-trash"></div></section></div>
   </main>
-  <footer><span>本地凭证 · 独立会话 · 官方 iLink 通道</span><button id="quit" class="text-button">退出启动器</button></footer>
+  <footer><span>本地凭证 · 独立会话 · 官方 iLink 通道</span><button id="logout" class="text-button" hidden>退出登录</button><button id="quit" class="text-button">退出启动器</button></footer>
 </div>
 <script src="/app.js" defer></script>
 </body></html>

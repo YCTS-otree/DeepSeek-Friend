@@ -63,6 +63,7 @@ function render(s) {
   $('qq-gateway-stop').disabled=s.busy || !['ready','starting'].includes(s.qqGateway);
 
   $('version').textContent = `v${s.version}`;
+  $('access-mode').textContent = s.publicAccess ? '密码保护 · IPv4 / IPv6' : '仅本机访问';
   $('dsh-address').textContent = s.baseUrl.replace(/^https?:\/\//, '');
   for (const service of ['dsh', 'bridge']) {
     const el = $(service + '-state'); el.textContent = serviceLabels[s[service]] ?? '未知'; el.className = 'service-state' + (s[service] === 'ready' ? ' active' : s[service] === 'error' ? ' error' : '');
@@ -107,7 +108,7 @@ async function post(path, body) {
   return data;
 }
 async function poll() {
-  try { const res = await fetch('/api/state', { cache: 'no-store' }); if (!res.ok) throw Error(); const s = await res.json(); offline = false; if (!sending) render(s); }
+  try { const res = await fetch('/api/state', { cache: 'no-store' }); if(res.status===401){location.replace('/');return;} if (!res.ok) throw Error(); const s = await res.json(); $('logout').hidden=!s.publicAccess; offline = false; if (!sending) render(s); }
   catch { offline = true; $('connection').textContent = '控制台已断开，请重新打开启动器'; document.querySelectorAll('button').forEach(b => b.disabled = true); for (const id of ['qr','qq-qr']) { $(id).hidden = true; $(id).removeAttribute('src'); } }
   setTimeout(poll, offline ? 3000 : 900);
 }
@@ -219,8 +220,8 @@ let currentPage = 'overview', settingsDirty = false, promptData = null, thoughtE
 function failNotice(id, e) { $(id).textContent = errors[e.message] ?? `操作未完成（${e.message}）`; }
 function route() {
   const name = typeof location === 'undefined' ? 'overview' : location.hash.slice(1);
-  currentPage = ['overview', 'sessions', 'controls', 'thoughts', 'identity', 'channels', 'internet', 'archives'].includes(name) ? name : 'overview';
-  const titles = { channels: ['连接不同渠道，记住是谁。', '微信和 QQ 共用会话；备注与可信账号分开。'], internet: ['先过滤，再判断。', '互联网仅供操作者测试，默认关闭且不对 Agent 展示。'], archives: ['给连续的历史，留一份归档。', '校验、保存，以及出问题时的可控回滚。'], overview: ['微信与 QQ，一起连接她。', '一键启动服务，分别用手机微信和 QQ 扫码授权。'], sessions: ['每段相遇，都有记录。', '正式会话归档保留；测试会话独立运行，可以清空。'], controls: ['给她自由，也保留掌控。', '切换思考深度，允许持续运行，或随时暂停与唤醒。'], thoughts: ['思考、安静和下一次醒来。', '查看本机私有记录，以及她为自己设置的小闹钟。'], identity: ['她的自我，和她的小房间。', '查看真实 Prompt 装配、历史 SYS 备份和持久空间。'] };
+  currentPage = ['overview', 'connections', 'sessions', 'controls', 'thoughts', 'identity', 'channels', 'internet', 'archives'].includes(name) ? name : 'overview';
+  const titles = { channels: ['连接不同渠道，记住是谁。', '微信和 QQ 共用会话；备注与可信账号分开。'], internet: ['先过滤，再判断。', '互联网仅供操作者测试，默认关闭且不对 Agent 展示。'], archives: ['给连续的历史，留一份归档。', '校验、保存，以及出问题时的可控回滚。'], overview: ['此刻，运行得怎么样？', '上下文、用量、余额和每一次连接，都在这里。'], connections: ['微信与 QQ，一起连接她。', '服务启停与二维码登录，集中在这里管理。'], sessions: ['每段相遇，都有记录。', '正式会话归档保留；测试会话独立运行，可以清空。'], controls: ['给她自由，也保留掌控。', '切换思考深度，允许持续运行，或随时暂停与唤醒。'], thoughts: ['思考、安静和下一次醒来。', '查看本机私有记录，以及她为自己设置的小闹钟。'], identity: ['她的自我，和她的小房间。', '查看真实 Prompt 装配、历史 SYS 备份和持久空间。'] };
   $('intro-title').textContent = titles[currentPage][0]; $('intro-description').textContent = titles[currentPage][1];
   for (const el of document.querySelectorAll('[data-page]')) el.hidden = el.dataset.page !== currentPage;
   for (const link of document.querySelectorAll('.console-nav a')) { const active = link.getAttribute('href') === '#' + currentPage; link.setAttribute('aria-current', active ? 'page' : 'false'); }
@@ -287,8 +288,8 @@ async function loadAlarms() {
 }
 async function refreshActivePanel() {
   if (!state?.csrf || panelLoading) return; panelLoading = true;
-  try { if (currentPage === 'overview' && state.bridge === 'ready') await loadChannelStatus(); if (currentPage === 'controls') await loadRuntime(); if (currentPage === 'thoughts') { await loadThoughts(); await loadAlarms(); } if (currentPage === 'identity') await loadPrompts(); if (['channels','internet'].includes(currentPage)) await loadChannels(); if (currentPage === 'archives') await loadArchives(); }
-  catch (e) { failNotice(['channels','internet','archives'].includes(currentPage) ? currentPage === 'channels' ? 'channels-notice' : currentPage === 'archives' ? 'archive-notice' : 'internet-notice' : currentPage === 'identity' ? 'prompt-notice' : currentPage === 'thoughts' ? 'mind-notice' : 'runtime-notice', e); }
+  try { if(currentPage==='overview')await loadDashboard(); if (['overview','connections'].includes(currentPage) && state.bridge === 'ready') await loadChannelStatus(); if (currentPage === 'controls') await loadRuntime(); if (currentPage === 'thoughts') { await loadThoughts(); await loadAlarms(); } if (currentPage === 'identity') await loadPrompts(); if (['channels','internet'].includes(currentPage)) await loadChannels(); if (currentPage === 'archives') await loadArchives(); }
+  catch (e) { if(currentPage==='overview'){$('dashboard-alert').hidden=false;$('dashboard-alert').textContent='指标读取失败：'+e.message;}else failNotice(['channels','internet','archives'].includes(currentPage) ? currentPage === 'channels' ? 'channels-notice' : currentPage === 'archives' ? 'archive-notice' : 'internet-notice' : currentPage === 'identity' ? 'prompt-notice' : currentPage === 'thoughts' ? 'mind-notice' : 'runtime-notice', e); }
   finally { panelLoading = false; }
 }
 $('context-session').addEventListener('change', async () => { selectSession($('context-session').value); renderSessions(); await loadHistory(); });
@@ -409,3 +410,30 @@ $('archive-compatibility-confirm').addEventListener('click',async()=>{if(!archiv
 $('archive-compatibility-cancel').addEventListener('click',()=>{$('archive-compatibility').hidden=true;archiveCompatibility=null;});
 $('archive-label-form').addEventListener('submit',async e=>{e.preventDefault();try{await archiveRequest('label',{name:$('archive-label-name').value,label:$('archive-label').value});$('archive-label-form').hidden=true;await loadArchives();}catch(err){failNotice('archive-notice',err);}});
 $('refresh-archives').addEventListener('click', () => { void loadArchives().catch(e => failNotice('archive-notice', e)); });
+
+const number=v=>Number.isFinite(v)?new Intl.NumberFormat('zh-CN').format(v):'—';
+function showTime(v){return v?new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'—';}
+async function loadDashboard(){
+ const requested=selectedSession,d=await sessionRequest('dashboard-status',{...(requested?{session:requested}:{})});if(requested!==selectedSession)return;
+ const n=d.native??{},t=n.tokens??{},r=d.runtime??{},g=d.guardian??{},m=d.memory??{};
+ const set=(id,value)=>$(id).textContent=value;
+ const sum=(...v)=>v.every(Number.isFinite)?v.reduce((a,b)=>a+b,0):null;
+ set('dashboard-updated','更新于 '+showTime(d.updated));
+ set('dash-agent',state.bridge!=='ready'?'服务未运行':r.paused?'推理已暂停':d.jobs?.some(x=>['waiting','submitting'].includes(x.state))?'正在工作':'等待消息');
+ set('dash-agent-note',r.paused?'全局暂停已开启，新消息会排队':r.continuous?'允许持续思考':'回复后休息');
+ set('dash-tokens',number(sum(t.uncachedInputTokens,t.cacheReadTokens,t.cacheWriteTokens,t.outputTokens)));set('dash-today',number(d.today?.total));
+ const balance=d.balance??{};set('dash-balance',balance.status==='ready'?balance.balances.map(x=>(x.currency==='CNY'?'¥':'US$')+' '+x.total_balance).join(' / '):balance.status==='loading'?'读取中':'暂不可用');
+ set('dash-balance-note',balance.status==='ready'?(balance.available?'账户可用':'余额不足')+' · '+showTime(balance.checkedAt)+(balance.stale?' · 缓存':''):balance.error??'DeepSeek 官方查询 · 每分钟更新');
+ const fromGuardian=Number.isFinite(g.measurement?.predicted)&&g.measurement?.contextWindow>0;
+ const c=fromGuardian?{projectedTokens:g.measurement.predicted,contextWindow:g.measurement.contextWindow}:n.status==='ready'?n.context:{};
+ const ratio=c.contextWindow>0?c.projectedTokens/c.contextWindow:null;set('dash-pressure',ratio===null?'—':(ratio*100).toFixed(1)+'%');$('dash-pressure-bar').value=ratio===null?0:Math.min(100,ratio*100);
+ set('dash-pressure-detail',number(c.projectedTokens)+' / '+number(c.contextWindow)+' Token');set('dash-context-source',fromGuardian?'Guardian 最近保护预测（含输出预留）· '+showTime(g.updated):n.status==='ready'?'DSH 原生投影 · '+showTime(n.checkedAt):'暂无可用测量');
+ set('dash-guardian',g.state??'未加载');set('dash-fixed',number(n.breakdown?.systemTokens)+' / '+number(n.breakdown?.toolsTokens));
+ set('dash-last',d.lastRequest?number(sum(d.lastRequest.input,d.lastRequest.cacheRead,d.lastRequest.cacheWrite))+' / '+number(d.lastRequest.output):'暂无记录');set('dash-model',(r.reasoningEffort??'—')+' / '+number(r.maxTokens));
+ set('dash-input',number(t.uncachedInputTokens));set('dash-cache',number(t.cacheReadTokens)+' / '+number(t.cacheWriteTokens));set('dash-output',number(t.outputTokens));set('dash-dream-tokens',number(d.dreamingUsage?.total)+' · '+number(d.dreamingUsage?.requests)+' 次请求');
+ set('dash-session',d.session?.title??'尚无正式会话');set('dash-queue',number((d.jobs??[]).reduce((a,x)=>a+x.count,0))+' / '+number((d.deliveries??[]).reduce((a,x)=>a+x.count,0)));set('dash-memory',number(m.nodes)+' / '+number(m.events));set('dash-alarms',number(d.alarms));
+ const el=$('dash-services');el.replaceChildren();for(const [label,value]of[['DSH',serviceLabels[state.dsh]??state.dsh],['微信 Bridge',serviceLabels[state.bridge]??state.bridge],['微信授权',loginLabels[state.login]??state.login],['QQ 网关',state.qqLogin==='ready'?'已登录':state.qqLogin??'未启动']]){const row=document.createElement('div'),a=document.createElement('span'),b=document.createElement('strong');a.textContent=label;b.textContent=value;row.append(a,b);el.append(row);}
+ set('dash-poll','微信最近成功同步：'+showTime(d.lastPoll));$('dashboard-alert').hidden=!(r.paused||(d.warnings??[]).length);set('dashboard-alert',r.paused?'全局推理已暂停：消息会保留在队列。可在「运行控制」解除暂停。':(d.warnings??[]).join('、'));
+}
+$('dashboard-refresh').addEventListener('click',()=>loadDashboard().catch(e=>{ $('dashboard-alert').hidden=false;$('dashboard-alert').textContent='指标读取失败：'+e.message;}));
+$('logout').addEventListener('click',async()=>{await post('/api/logout',{});location.replace('/');});

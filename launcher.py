@@ -22,6 +22,8 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 from scripts.archive_manager import ArchiveManager, ArchiveError
+from scripts.dashboard import Dashboard
+from scripts.web_auth import PasswordAuth, public_host
 
 ROOT = Path(__file__).resolve().parent
 VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
@@ -42,6 +44,7 @@ class Controller:
     def __init__(self, root=ROOT, auto_qq=False):
         self.root = Path(root)
         self.auto_qq = auto_qq
+        self.dashboard = Dashboard(self.root)
         self.lock = threading.RLock()
         self.children = {}
         self.cancel = threading.Event()
@@ -313,6 +316,10 @@ class Controller:
             self.state.update(verifyId=None, login="confirming")
 
     def sessions(self, action, args=None):
+        if action=='dashboard-status':
+            if args is not None and (not isinstance(args,dict) or set(args)-{'session'}):raise LauncherError('dashboard-args-invalid')
+            try:return self.dashboard.snapshot((args or {}).get('session'))
+            except ValueError as error:raise LauncherError(str(error)) from None
         with self.session_commands_lock:
             if action=='mnn-status':
                 from scripts.mnn_admin import MnnInstallation
@@ -426,15 +433,17 @@ class Controller:
             self.commands.put(None)
         # Never terminate an in-progress multi-component restore during normal shutdown.
         self.worker.join(timeout=None if archive_running else 40)
+        self.dashboard.close()
 
 
 class LocalServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self, address, controller):
-        if address[0] != "127.0.0.1":
+    def __init__(self, address, controller, auth=None):
+        if auth is None and address[0] != "127.0.0.1":
             raise ValueError("loopback-only")
+        self.auth=auth
         self.controller = controller
         self.ticket = secrets.token_urlsafe(32)
         self.session = secrets.token_urlsafe(32)
@@ -443,7 +452,13 @@ class LocalServer(ThreadingHTTPServer):
         self.origin = "http://127.0.0.1:" + str(self.server_port)
 
     def launch_url(self):
-        return self.origin + "/?ticket=" + self.ticket
+        return self.origin + ('/' if self.auth else "/?ticket=" + self.ticket)
+
+class IPv6Server(LocalServer):
+    address_family=socket.AF_INET6
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1)
+        super().server_bind()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -471,13 +486,24 @@ class Handler(BaseHTTPRequestHandler):
             pass  # A closed/reloaded tab is not a service failure; do not print its request.
 
     def _host_ok(self):
-        return self.headers.get("Host") == urlsplit(self.server.origin).netloc
+        return public_host(self.headers.get('Host')) if self.server.auth else self.headers.get("Host") == urlsplit(self.server.origin).netloc
+
+    def _origin(self):
+        return 'http://'+self.headers.get('Host','') if self.server.auth else self.server.origin
+
+    def _token(self):
+        try:return SimpleCookie(self.headers.get('Cookie','')).get('ds_friend').value
+        except (ValueError,TypeError,CookieError,AttributeError):return ''
+
+    def _csrf(self):
+        return self.server.auth.session(self._token()) if self.server.auth else self.server.csrf
 
     def setup(self):
         super().setup()
         self.connection.settimeout(10)
 
     def _authenticated(self):
+        if self.server.auth:return self._csrf() is not None
         try:
             cookies = SimpleCookie(self.headers.get("Cookie", ""))
             value = cookies.get("ds_friend")
@@ -489,7 +515,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._reply(403, {"error": "host-rejected"})
         target = urlsplit(self.path)
-        if target.path == "/" and "ticket" in parse_qs(target.query):
+        if self.server.auth and not self._authenticated():
+            assets={'/':('login.html','text/html; charset=utf-8'),'/login.js':('login.js','text/javascript; charset=utf-8'),'/login.css':('login.css','text/css; charset=utf-8')}
+            if target.path in assets:
+                file,mime=assets[target.path];return self._reply(200,(ROOT/'web'/file).read_bytes(),mime)
+            return self._reply(401,{'error':'admin-auth-required'})
+        if not self.server.auth and target.path == "/" and "ticket" in parse_qs(target.query):
             ticket = parse_qs(target.query)["ticket"][0]
             if self.server.ticket and same(ticket, self.server.ticket):
                 self.server.ticket = ""  # Single-use exchange. Clean URL after redirect.
@@ -517,7 +548,7 @@ class Handler(BaseHTTPRequestHandler):
             filename, mime = assets[target.path]
             return self._reply(200, (ROOT / "web" / filename).read_bytes(), mime)
         if target.path == "/api/state":
-            return self._reply(200, {**self.server.controller.snapshot(), "csrf": self.server.csrf})
+            return self._reply(200, {**self.server.controller.snapshot(), "csrf": self._csrf(), 'publicAccess':bool(self.server.auth)})
         if target.path == "/api/qq-qr.svg":
             with self.server.controller.lock:
                 svg = self.server.controller.qq_svg
@@ -529,14 +560,27 @@ class Handler(BaseHTTPRequestHandler):
         return self._reply(404, {"error": "not-found"})
 
     def do_POST(self):
+        if self.server.auth and self.path=='/api/login':
+            if not self._host_ok() or self.headers.get('Origin')!=self._origin():return self._reply(403,{'error':'request-rejected'})
+            try:
+                size=int(self.headers.get('Content-Length','0'))
+                if not 0<size<=2048 or self.headers.get_content_type()!='application/json':raise ValueError('invalid-request')
+                data=json.loads(self.rfile.read(size))
+                if not isinstance(data,dict):raise ValueError('invalid-request')
+                token,_=self.server.auth.login(data.get('password'),self.client_address[0])
+                return self._reply(200,{'ok':True},headers={'Set-Cookie':'ds_friend='+token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200'})
+            except (ValueError,OSError) as error:
+                code=str(error) if str(error).startswith('admin-') else 'invalid-request'
+                return self._reply(429 if code=='admin-login-rate-limited' else 401,{'error':code})
         if (not self._host_ok() or not self._authenticated()
-                or self.headers.get("Origin") != self.server.origin
-                or not same(self.headers.get("X-CSRF-Token", ""), self.server.csrf)):
+                or self.headers.get("Origin") != self._origin()
+                or not same(self.headers.get("X-CSRF-Token", ""), self._csrf())):
             return self._reply(403, {"error": "request-rejected"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             limit = 65536 if self.path == "/api/sessions" else 1024
             if not 0 < size <= limit or self.headers.get_content_type() != "application/json":
+                if 0<size<=1024*1024:self.rfile.read(size)
                 raise ValueError()
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
@@ -544,7 +588,9 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return self._reply(400, {"error": "invalid-request"})
         try:
-            if self.path == "/api/verify":
+            if self.path=='/api/logout' and self.server.auth:
+                self.server.auth.logout(self._token());return self._reply(200,{'ok':True},headers={'Set-Cookie':'ds_friend=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
+            elif self.path == "/api/verify":
                 self.server.controller.verify(data.get("id"), data.get("code"))
             elif self.path == "/api/action":
                 self.server.controller.enqueue(data.get("action"))
@@ -555,7 +601,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/quit":
                 if any(op['state'] in ('queued', 'running') for op in self.server.controller.archives.operations.values()):
                     raise ArchiveError('dsf-maintenance-busy')
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                for item in getattr(self.server,'peers',[self.server]):threading.Thread(target=item.shutdown, daemon=True).start()
             else:
                 return self._reply(404, {"error": "not-found"})
         except (LauncherError, ArchiveError) as exc:
@@ -565,33 +611,54 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description="DeepSeek:Friend 本地 Web 启动器")
-    parser.add_argument("--port", type=int, default=3090)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-browser", action="store_true", help="仅运行服务，不自动打开浏览器")
     parser.add_argument("--start", action="store_true", help="打开控制台后自动启动独立 DSH、Bridge 和已安装的 QQ Bot")
+    parser.add_argument('--public',action='store_true',help='密码保护的 IPv4/IPv6 全地址监听；先保存校验 DSF')
+    parser.add_argument('--local',action='store_true',help='仅本机监听，本次不使用保存的公网设置')
     args = parser.parse_args()
     controller = Controller(auto_qq=True)
+    servers=[]
     try:
-        server = LocalServer(("127.0.0.1", args.port), controller)
+        from scripts import dsf
+        access=dsf.settings(ROOT)[0]/'admin-access.json'
+        saved=json.loads(access.read_text(encoding='utf-8')) if access.exists() else {}
+        args.port=args.port or saved.get('port',3090)
+        public=not args.local and (args.public or saved.get('enabled') is True)
+        if public:
+            auth=PasswordAuth(ROOT/'ADMIN_PWD.key')
+            op=controller.archives.feature('admin-public-configure',{'enabled':True,'port':args.port});controller.archives.run(op['archiveOperation'])
+            if controller.archives.operations[op['archiveOperation']]['state']!='done':raise ValueError('dsf-public-checkpoint-failed')
+            servers.append(LocalServer(('0.0.0.0',args.port),controller,auth));servers.append(IPv6Server(('::',args.port),controller,auth))
+            server=servers[0]
+        else:server=LocalServer(("127.0.0.1", args.port), controller);servers.append(server)
     except OSError:
+        for item in servers:item.server_close()
         controller.close()
         print("启动失败：Web UI 端口已被占用或不可用，请检查原启动器或通过 --port 指定其他端口。")
         return 1
+    except ValueError as error:
+        for item in servers:item.server_close()
+        controller.close();print(str(error) if str(error).startswith(('admin-','dsf-')) else 'admin-start-failed',flush=True);return 1
     # Avoid running shutdown() on the serving thread (would deadlock).
     def stop(*_):
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        for item in servers:threading.Thread(target=item.shutdown, daemon=True).start()
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
-    print(f"DeepSeek:Friend {VERSION} · 本地控制台 {server.origin}", flush=True)
-    print("浏览器将自动打开。请点击「一键启动全部」；关闭此终端会停止本启动器管理的服务。", flush=True)
+    print(f"DeepSeek:Friend {VERSION} · 控制台 {server.origin}", flush=True)
+    if public:print(f"密码保护已开启；监听 IPv4 0.0.0.0:{args.port} 和 IPv6 [::]:{args.port}。",flush=True)
+    print("关闭此启动器会停止它管理的服务。" if args.start else "请在控制台点击「一键启动全部」。关闭此启动器会停止它管理的服务。", flush=True)
     if not args.no_browser:
         webbrowser.open(server.launch_url())
     if args.start:
         controller.enqueue("start")
+    for item in servers:item.peers=servers
+    for item in servers[1:]:threading.Thread(target=item.serve_forever,kwargs={'poll_interval':.2},daemon=True).start()
     try:
         server.serve_forever(poll_interval=0.2)
     finally:
         controller.close()
-        server.server_close()
+        for item in servers:item.server_close()
     return 0
 
 

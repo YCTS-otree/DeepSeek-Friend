@@ -15,6 +15,12 @@ function page() {
   vm.runInContext(fs.readFileSync('web/app.js', 'utf8') + '\nstate = {csrf:"fixture"};', context);
   return { context, get, run: code => vm.runInContext(code, context), respond: fn => { context.fetch = async (_url, request) => ({ ok: true, json: async () => fn(JSON.parse(request.body)) }); } };
 }
+test('dashboard shows native pressure, cache-inclusive usage, real balance and the separate inference pause',async()=>{
+ const p=page();p.run('state={csrf:"fixture",bridge:"ready",dsh:"ready",login:"ready",qqLogin:"ready"};');
+ p.respond(()=>({updated:1792886400000,native:{status:'ready',context:{projectedTokens:390,contextWindow:1000},tokens:{uncachedInputTokens:10,cacheReadTokens:20,cacheWriteTokens:0,outputTokens:4}},runtime:{paused:true,continuous:true,reasoningEffort:'max',maxTokens:8192},balance:{status:'ready',available:true,balances:[{currency:'CNY',total_balance:'12.34'}]},jobs:[],deliveries:[],session:{title:'original'}}));
+ await p.run('loadDashboard()');assert.equal(p.get('dash-pressure').textContent,'39.0%');assert.equal(p.get('dash-tokens').textContent,'34');assert.equal(p.get('dash-balance').textContent,'¥ 12.34');assert.equal(p.get('dash-agent').textContent,'推理已暂停');assert.equal(p.get('dashboard-alert').hidden,false);
+ p.respond(()=>({native:{status:'error'},balance:{status:'error',error:'balance-query-failed'}}));await p.run('loadDashboard()');assert.equal(p.get('dash-balance').textContent,'暂不可用');
+});
 test('archive relative ages show minutes, hours and combined days with stable invalid/future handling',()=>{
  const p=page();const now=Date.parse('2026-10-24T12:00:00Z');p.context.ageNow=now;
  assert.equal(p.run('archiveAge(new Date(ageNow-60000).toISOString(),ageNow)'),'1分钟前');

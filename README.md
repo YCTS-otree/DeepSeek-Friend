@@ -13,6 +13,7 @@ DSH 是唯一 Agent Runtime。Bridge 负责通讯、会话路由、来源标注�
 | [架构融合指南](docs/integration-guide.md) | 共同开发的入口、复用顺序与迁移边界 |
 | [分发与打包](docs/distribution.md) | 源码包、保留状态的朋友包、清理与校验 |
 | [部署与故障](docs/operations.md) | 配置、错误、unknown/review 与恢复 |
+| [仪表板与公网控制台](docs/dashboard-public-privacy.md) | 动态指标、余额、双栈密码登录、维护记录隔离与实测边界 |
 | [版本兼容](docs/compatibility.md) | 真实源码分析与未验证事项 |
 | [MNN 集成与回滚](docs/mnn-integration.md) | 统一记忆、压力小憩、安装门禁与故障恢复 |
 | [MNN 验收记录](docs/mnn-validation-v120.md) | 真实三轮小憩、回归、检索负面结果与限制 |
@@ -50,17 +51,17 @@ npm run qq:setup
 
 | 服务/数据 | 默认位置 |
 | --- | --- |
-| WebUI | `http://127.0.0.1:3090`，一次性票据交换后清理 URL |
+| WebUI | 默认 `http://127.0.0.1:3090`；本机模式一次性票据，公网模式密码登录（本次 3101） |
 | 独立 DSH | `http://127.0.0.1:3088`，拒绝工作端口 3080 |
 | OneBot / QQ 管理 | 回环 `3001` / `6101`，凭证鉴权 |
 | 数据 / 小房间 | `data/` / `data/cognitive/room/` |
 | DSH 原生上下文 | `.runtime/home/sessions/` |
 
-控制台校验 Cookie、Origin/Host 和 CSRF，不要转发到公网。Windows 授权经当前用户 DPAPI 保护，不能跨电脑继承。已有终端实例时先停止，再交给集成启动器；关闭网页不停止服务，「退出启动器」只结束它创建的进程。
+控制台校验 Cookie、Origin/Host 和 CSRF。需要公网时使用 `python launcher.py --port 3101 --public --start`，先校验 DSF，再同时绑定 IPv4/IPv6；根目录 `ADMIN_PWD.key` 是登录密码文件。防火墙、路由及 HTTP 传输边界见[公网部署说明](docs/dashboard-public-privacy.md)。Windows 渠道授权经当前用户 DPAPI 保护，不能跨电脑继承。已有终端实例时先停止，再交给集成启动器；关闭网页不停止服务，「退出启动器」只结束它创建的进程。
 
 ## 日常控制
 
-「QQ 与通讯录 → 群聊管理」按群启停，新群默认关闭；启用后接收全部新消息，无需 @，停用不删历史。「会话与测试」显式切换当前正式会话，测试不发真实消息。「运行控制」调整深度、单次长度、暂停/停止/唤醒。「Prompt 与小房间」查看替换后的 SYS、旧备份及实际装配。
+「仪表板」显示原生上下文、Token、余额、队列与记忆状态；「连接与扫码」保留并列二维码和一键启动。「QQ 与通讯录 → 群聊管理」按群启停，新群默认关闭；启用后接收全部新消息，无需 @，停用不删历史。「会话与测试」显式切换当前正式会话，测试不发真实消息。「运行控制」调整深度、单次长度、暂停/停止/唤醒。「Prompt 与小房间」查看替换后的 SYS、旧备份及实际装配。
 
 终端保留 `npm run doctor`、`npm start`、`npm run dsh:start -- --open`。故障时先核对 unknown 或 review，不盲目重复提交。回滚使用 [DSF](docs/dsf-format.md)，不要直接替换运行中的数据库。
 

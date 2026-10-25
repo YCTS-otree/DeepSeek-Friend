@@ -262,6 +262,9 @@ class ArchiveManager:
 
     def feature(self, action, args):
         """Return a checkpoint operation only when existing boundaries actually expand."""
+        if action=='admin-public-configure':
+            if not isinstance(args,dict) or set(args)!={'enabled','port'} or type(args['enabled']) is not bool or type(args['port']) is not int or not 1024<=args['port']<=65535:raise ArchiveError('dsf-public-config-invalid')
+            with self.c.lock:return self.begin('feature',{'action':action,'changes':args})
         if action == 'mnn-configure':
             from scripts.mnn_admin import MnnInstallation
             manager=MnnInstallation(self.root)
@@ -322,9 +325,12 @@ class ArchiveManager:
                     if op['kind']=='feature' and args['action']=='mnn-configure':
                         from scripts.mnn_admin import MnnInstallation
                         op['result']['value']=MnnInstallation(self.root).configure(args['changes'],current)
+                    if op['kind']=='feature' and args['action']=='admin-public-configure':
+                        from scripts.public_access import configure
+                        op['result']['value']=configure(self.root,args['changes'],current)
             op['progress'] = '恢复原来运行的项目服务'
             self.resume(before); stopped = False
-            if op['kind'] == 'feature' and args['action']!='mnn-configure':
+            if op['kind'] == 'feature' and args['action'] not in ('mnn-configure','admin-public-configure'):
                 op['progress'] = '应用已完成归档的功能设置'
                 deadline = self.clock() + 40
                 if before['bridge']:
