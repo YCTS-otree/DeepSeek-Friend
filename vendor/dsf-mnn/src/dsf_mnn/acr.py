@@ -5,6 +5,7 @@ import json
 from .model import MemoryError, canonical, digest
 from .evidence_recall import speaker_metadata, semantic_body
 from .recall import Recall
+from .continuity import recent_dialogue
 
 
 class AdaptiveContextReconstruction:
@@ -86,6 +87,7 @@ class AdaptiveContextReconstruction:
                    "source_event_range": {"first": export["events"][0]["seq"], "last": export["events"][-1]["seq"], "digest": dreaming["snapshot_digest"]},
                    "self_model": "unchanged; original complete system projection retained exactly", "time": records[-1]["observed_at"]}
         payload["current_task"] = current_task
+        payload['recent_dialogue']=recent_dialogue(export,records,self.counter,token_budget=min(8192,max(256,self.context_tokens//8)))
         payload["task_selected_memory_refs"] = task_ranking
         payload["pending_source_requests"] = [{"source_seq": p["seq"], "source_ref": by_seq[p["seq"]]["id"],
             "observed_at": by_seq[p["seq"]]["observed_at"], "content": semantic_body({"content": by_seq[p["seq"]]["text"]})}

@@ -57,7 +57,7 @@ def apply(session):
         if run.returncode:raise ValueError('privacy-native-reconstruction-failed')
         marker=directory/'activation.json'
         if marker.exists():
-            value=json.loads(marker.read_text(encoding='utf-8'));value['integrationVersion']='1.2.1';value['privateHistoryFilter']=True;value['privateRepairPending']=False
+            value=json.loads(marker.read_text(encoding='utf-8'));value['integrationVersion']=json.loads((ROOT/'vendor/dsf-mnn/SOURCE.json').read_text(encoding='utf-8'))['integrationVersion'];value['privateHistoryFilter']=True;value['privateRepairPending']=False
             partial=marker.with_suffix('.partial');partial.write_text(json.dumps(value,indent=2),encoding='utf-8');partial.replace(marker)
         print(json.dumps(result))
 

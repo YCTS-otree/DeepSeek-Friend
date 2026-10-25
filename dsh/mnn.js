@@ -130,7 +130,7 @@ export function mountMnn(ctx,dataDir,config) {
   ctx.on('agent/request-error',async({agent,failure},next)=>{if(/CONTEXT_WINDOW|context.window|overflow/i.test(JSON.stringify(failure))){guardian.change(agent.id,'REST_REQUIRED','provider-overflow');publish(agent.id);}return next();});
   ctx.on('session/event',(session,event)=>{
     if(event.type==='turn/end')lastActivity.set(session.id,Date.now());
-    if(event.type==='user/message'&&!['mnn-runtime','compact-checkpoint','friend-continuation'].includes(event.data.source?.kind))associationPending.set(session.id,session);
+    if(event.type==='user/message'&&!['mnn-runtime','compact-checkpoint','friend-continuation','mnn-continuity-context'].includes(event.data.source?.kind))associationPending.set(session.id,session);
   });
   const tick=async()=>{
     if(config.paused)return;

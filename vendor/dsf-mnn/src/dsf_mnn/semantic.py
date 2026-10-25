@@ -76,7 +76,7 @@ def normalize_export(export):
                 "native_seq": raw.get("native_seq", seq), "has_media": bool(message and any(b.get("type") in {"image", "file", "document"} for b in message.get("content", [])))}
         if kind in ('turn/end','request/header') or seq in export.get('hidden_seqs',[]) or internal_diagnostic(text):
             text='[operator-only record]';meta['operator_only']=True;source_kind='inference'
-        if message and message.get("source", {}).get("kind") in {"compaction", "compact-checkpoint", "friend-continuation", "mnn-runtime"}:
+        if message and message.get("source", {}).get("kind") in {"compaction", "compact-checkpoint", "friend-continuation", "mnn-runtime", "mnn-continuity-context"}:
             source_kind = "inference"
             meta["generated_context"] = True
         if kind == "tool/call":
