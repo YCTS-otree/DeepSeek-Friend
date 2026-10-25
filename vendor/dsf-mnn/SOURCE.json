@@ -1,6 +1,6 @@
 {
   "baseline": "7fcccbc",
-  "integrationVersion": "1.3.0",
+  "integrationVersion": "1.3.1",
   "origin": "../DSF_MNN",
   "licensing": "MNN maintainer authorization for this integration; see THIRD_PARTY_NOTICES.md; no blanket MIT relicense",
   "files": {
@@ -9,14 +9,14 @@
     "adapters/dsh/client.mjs": "2d799bf3015be639f16b32cfc0028e115b10fcaaaa1428a0a7ab3cceb9ec5c63",
     "adapters/dsh/cognitive-engine.mjs": "bc14d05827487db0caef25fd0ed8d64d551e2f1ea14a085d6d1f2e46609defe7",
     "adapters/dsh/native-kernel.mjs": "bcfffb3c1a36f2ae447f7cb941ad63a601004a1d8a48669256325e7fee5d8675",
-    "adapters/dsh/package.json": "9d610fcee12fb2dc9ea4b3d21963cc96e7e35a44178a7de4d04417441b7d2e2d",
+    "adapters/dsh/package.json": "266f63fcd8b410db85e152b9c46376433468212a6c3953daf0662d412e3f5c10",
     "adapters/dsh/recovery-experiment.mjs": "6636cc81dfe1827e1d427cc1d09b1853ee30789c0f2e561b93f2b7b6cdc60fc5",
     "adapters/dsh/recovery-inspect.mjs": "68d64c8a3554e9538cd2b6951f2eaa40373791c69d402bc5285147eb9b16ac15",
     "adapters/dsh/remote-provider.mjs": "e1d49e3c23d8d88b9fbbff4d7f52ff7ccbfb920b10a7ab6d456028e630a84076",
     "configs/tokenizer-lock.json": "3e3d5a27624dfb546e4014eced0ed4a7216b9c8df18cb131cd0fc0bb787e0d5b",
-    "pyproject.toml": "382e0d543edcb62a8a33561829c766644954a150b91cc57fdc3e4fd6d9607926",
+    "pyproject.toml": "9d24424ee36c331110b5c26722d9841cc18bb57053faa830db92ae1496242908",
     "scripts/evaluate_production.py": "afbe95a833a0bef2ce0a3220fc414849fae6ebf1a156cada0f23c9674a257d56",
-    "src/dsf_mnn/__init__.py": "b636698f8df6176ac4ea1f0b68c9c7841fa8b2880ad5974745064686e1024be2",
+    "src/dsf_mnn/__init__.py": "d6c6b05e0adf80f5af8b9e24b7c163641b3abcbccac6b6504d33016fe41a3c1b",
     "src/dsf_mnn/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
     "src/dsf_mnn/acr.py": "93f83ca07155704a268c94fe16e9e62c7eb236a37bf2de46dc8b92e763227ff9",
     "src/dsf_mnn/association.py": "d57b2422e644e154fddf3b36c5e43aae3f5deca4c75027ff8fbe8378627963f4",
@@ -30,7 +30,7 @@
     "src/dsf_mnn/formation.py": "4e6cb6e537481b44249d1eff488c901a6acb78b8bbef2e8f44e6dd37e649097d",
     "src/dsf_mnn/lifecycle.py": "89cb2e0ae1abd95d9368830cd99ecda41d52ceb9083c07588de7ab9a02496253",
     "src/dsf_mnn/model.py": "33463681af29eeb05d89f2a3489c9b49c7954cdb50ad629fbc66785e09ef7a09",
-    "src/dsf_mnn/production.py": "b48894bff2df92d8c0c874cfb6ed70b854846d58b16589a9d528f109f7b32f85",
+    "src/dsf_mnn/production.py": "a55c4d6187bc785308b3c450d67c3a474de575a34651427aa92f7e489e775717",
     "src/dsf_mnn/production_cli.py": "023e3bf8e2de1d3a5324f3452ae5c907c03de53c66ced9ec80e08a67ed2aff0d",
     "src/dsf_mnn/recall.py": "03512166356c645af400e5484b94a4665ee68b9134b55a9747171b9b77bb8ce2",
     "src/dsf_mnn/remote.py": "9e28c55d67878551ec73d94b2c559388a8c55e12c71c9efdcb4dcce802a441f5",
@@ -52,11 +52,11 @@
     "tests/test_memory.py": "d8cca5a021496712eb3ac3e99e981e88d9d7e4a5e59f644855295031268f2ecb",
     "tests/test_production.py": "06f7ba14957aebf4220a7cc3d7da2fbe4b78da9b157d593384ba13c9dfce9079",
     "tests/test_semantic.py": "fb2b8bc26bace520e581e2968a7cd425e6158e86e13bc0b960148b2221d9a6bb",
-    "tests/test_source_policy.py": "eec1b69468aa356da3077efbcd01094d7eeecb8ba6eac7bc5954ae7cbbaea818",
+    "tests/test_source_policy.py": "b1cbd67cf22efd356f6c6b25146c4ffeb6ad1314b976c51ef042ff240f402baf",
     "tests/test_tools.py": "38c0bc89e4446e7e57ef2111a2a44c9482033d3fbd7983ef03305cfdd4d6cff1",
     "tests/test_visibility.py": "616b1d65bef0ec196be078ad0e85bcd01f57f1279df5b95174aaafd5a12cf394",
     "THIRD_PARTY_NOTICES.md": "a5178d36716165b87f58d30dbf538c2b6dc511393cc44a1483bb12d02c8d9183"
   },
-  "upstreamCommit": "c505ddba39295b69ba11730024bd544178612231",
+  "upstreamCommit": "d8b82855ba7c0c9d4efcd8f8057b355522703f29",
   "bytePolicy": "Mirror of validated Windows checkout; Git attributes preserve bytes; SOURCE.json hashes are authoritative."
 }

@@ -42,7 +42,7 @@ def prepare(source):
     fence=clean_transport(stage/'data',data,'ea38d96b-7c50-4478-87f2-a9bc9512ba5f',epoch)
     old=data/'cognitive/mnn/activation.json';settings=json.loads(old.read_text(encoding='utf-8')) if old.exists() else {}
     activation={k:settings[k] for k in ['tokenizer','guardian','idleMinutes','dreamingTime','timezone'] if k in settings}
-    activation.update(schema='dsf-mnn-activation/1',integrationVersion='1.3.0',runtimeVersion='0.2.0-rc.2',enabled=True,paused=False,generation=epoch,privateRepairPending=True,selfAutoCommit=False,basicFallback=False)
+    activation.update(schema='dsf-mnn-activation/1',integrationVersion=json.loads((ROOT/'vendor/dsf-mnn/SOURCE.json').read_text(encoding='utf-8'))['integrationVersion'],runtimeVersion='0.2.0-rc.2',enabled=True,paused=False,generation=epoch,privateRepairPending=True,selfAutoCommit=False,basicFallback=False)
     mnn=stage/'data/cognitive/mnn';mnn.mkdir();write(mnn/'activation.json',activation)
     with closing(sqlite3.connect(stage/'data/cognitive/cognitive.sqlite')) as db:
         db.execute("UPDATE tasks SET state='cancelled' WHERE state IN ('pending','running')");db.commit()

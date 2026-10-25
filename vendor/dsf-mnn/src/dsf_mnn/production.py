@@ -9,7 +9,7 @@ import hashlib
 from contextlib import closing
 from . import MemoryStore, Scope, Event
 from .model import MemoryError, Node, canonical, digest
-from .semantic import SemanticDreaming, normalize_export
+from .semantic import SemanticDreaming, normalize_export, semantic_units
 from .acr import AdaptiveContextReconstruction,render_checkpoint
 from .recall import Recall, RecallBudget
 from .evidence_recall import EvidenceRecall
@@ -116,22 +116,29 @@ class ProductionMemory:
         counter=self.counter or CpuTokenCounter(self.tokenizer);provider=self.provider or RemoteProvider(self.root,folder/'provider')
         watermark='semantic-dreaming:'+original['session_id'];previous=self.store.watermark(self.scope,watermark);selected={r['seq'] for r in records if r['seq']>previous}
         incremental={**mapped,'watermark_key':watermark,'events':[e for e in mapped['events'] if e['seq'] in selected],'projected':[p for p in mapped['projected'] if p['seq'] in selected]}
+        # Native seed/compaction markers and generated context advance the raw
+        # boundary, but are not new witnessed experiences. Do not ask the LLM
+        # to reconsolidate old notes and create fresh goals from an empty batch.
+        witnessed=bool(semantic_units(incremental,[r for r in records if r['seq'] in selected]))
         if (folder/'history.json').exists():
             history=json.loads((folder/'history.json').read_text(encoding='utf-8'))
-        elif selected:
+        elif witnessed:
             history,_=SemanticDreaming(self.store,self.scope,provider,counter,folder/'semantic',concurrency=1,before_commit=lambda:self.authorize_source(original['session_id'])).run(incremental)
         else:
             receipt=self.store.db.execute("SELECT body FROM production_runs WHERE json_extract(body,'$.session_id')=? OR json_extract(body,'$.plan.session_id')=? ORDER BY rowid DESC LIMIT 1",(original['session_id'],original['session_id'])).fetchone()
-            if not receipt:raise MemoryError('dreaming-no-history')
-            previous_id=json.loads(receipt[0])['run_id']
-            if not isinstance(previous_id,str) or not re.fullmatch('[a-f0-9]{64}',previous_id):raise MemoryError('dreaming-history-path')
-            previous_file=(self.directory/'runs'/previous_id/'history.json').resolve()
-            if not previous_file.is_relative_to(self.directory.resolve()):raise MemoryError('dreaming-history-path')
-            # Receipt paths are provenance, never a request to open another file.
-            history=json.loads(previous_file.read_text(encoding='utf-8'))
+            if not receipt:
+                history={'consolidation':{'themes':[],'carryover':[],'decisions':[],'self_update':None},'memory_versions':{}}
+            else:
+                previous_id=json.loads(receipt[0])['run_id']
+                if not isinstance(previous_id,str) or not re.fullmatch('[a-f0-9]{64}',previous_id):raise MemoryError('dreaming-history-path')
+                previous_file=(self.directory/'runs'/previous_id/'history.json').resolve()
+                if not previous_file.is_relative_to(self.directory.resolve()):raise MemoryError('dreaming-history-path')
+                # Receipt paths are provenance, never a request to open another file.
+                history=json.loads(previous_file.read_text(encoding='utf-8'))
         self.authorize_source(original['session_id'])
+        if not witnessed and records:self.store.advance(self.scope,watermark,max(previous,max(r['seq'] for r in records)))
         history={**history,'snapshot_digest':digest(mapped['events'])};history_file=folder/'history.json';atomic_json(history_file,history)
-        result={'run_id':run_id,'session_id':original['session_id'],'implementation_revision':revision,'memoryPersisted':True,'self_update':'noop','semantic_file':history_file.relative_to(self.directory).as_posix(),'snapshot_digest':digest(original['events']),'carryover':history['consolidation']['carryover']}
+        result={'run_id':run_id,'session_id':original['session_id'],'implementation_revision':revision,'memoryPersisted':True,'self_update':'noop','newWitnessedEvidence':witnessed,'semantic_file':history_file.relative_to(self.directory).as_posix(),'snapshot_digest':digest(original['events']),'carryover':history['consolidation']['carryover']}
         if reconstruct:
             try:
                 plan=AdaptiveContextReconstruction(counter,context_tokens=context_tokens,output_reserve=output_reserve).build(mapped,records,self.store,self.scope,history,current_task=current_task)

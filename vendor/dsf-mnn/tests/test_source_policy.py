@@ -1,6 +1,6 @@
 import sqlite3,pytest
 from contextlib import closing
-from test_production import export,Provider,Counter
+from test_production import export,Provider,Counter,add
 from dsf_mnn.production import ProductionMemory
 from dsf_mnn.model import MemoryError
 
@@ -35,3 +35,20 @@ def test_source_archived_during_llm_call_cannot_commit_generated_notes(tmp_path)
 def test_old_graph_cannot_be_relabelled_as_a_new_generation(tmp_path):
     file=tmp_path/'bridge.sqlite';registry(file);m=ProductionMemory(tmp_path/'memory',provider=Provider(),counter=Counter());m.capture(export('active'));m.close()
     with pytest.raises(MemoryError,match='generation-mismatch'):ProductionMemory(tmp_path/'memory',registry=file,generation='epoch-a')
+
+def test_only_generated_context_and_runtime_markers_are_cross_day_noops(tmp_path):
+    provider=Provider();m=ProductionMemory(tmp_path/'memory',provider=provider,counter=Counter());data=export()
+    try:
+        m.dreaming(data,day='2026-10-21');calls=provider.calls;nodes=m.store.nodes(m.scope)
+        add(data,'user','Generated carryover from the previous history')
+        data['events'][-1]['data']['source']={'kind':'compact-checkpoint'}
+        data['projected'][-1]['message']['source']={'kind':'compact-checkpoint'}
+        for day in range(22,27):
+            seq=len(data['events']);data['events'].append({'seq':seq,'time':1792400000000+seq*1000,'type':'session/end-seed','data':{}})
+            result=m.dreaming(data,day=f'2026-10-{day}',reconstruct=False)
+            assert result['newWitnessedEvidence'] is False
+            assert provider.calls==calls and m.store.nodes(m.scope)==nodes
+        add(data,'user','New witnessed project port=3100')
+        assert m.dreaming(data,day='2026-10-27',reconstruct=False)['newWitnessedEvidence'] is True
+        assert provider.calls>calls
+    finally:m.close()
