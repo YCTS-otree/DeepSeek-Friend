@@ -4,6 +4,7 @@ import { qqDestination } from './contacts.js';
 import { textMessage } from './ilink.js';
 import { BridgeError } from './util.js';
 import { clean } from './cognitive/store.js';
+import { agentVisibleText } from './visibility.js';
 
 export class Store {
   constructor(file, { readOnly = false } = {}) {
@@ -138,7 +139,7 @@ export class Store {
       const entries = []; let bytes = 0;
       for (const row of rows) { const size = Buffer.byteLength(JSON.stringify(row)); if (entries.length && bytes + size > 750000) break; entries.push(row); bytes += size; }
       entries.reverse();
-      return { entries: entries.map(e => ({ ...e, actor: JSON.parse(e.actor) })), hasMore: Boolean(entries.length && this.db.prepare('SELECT 1 FROM chat_entries WHERE session=? AND n<? LIMIT 1').get(args.session, entries[0].n)) };
+      return { entries: entries.map(e => ({ ...e, text: agentVisibleText(e.text), actor: JSON.parse(e.actor) })), hasMore: Boolean(entries.length && this.db.prepare('SELECT 1 FROM chat_entries WHERE session=? AND n<? LIMIT 1').get(args.session, entries[0].n)) };
     }
     if (!['create', 'switch', 'archive'].includes(action)) throw new BridgeError('session-action-invalid');
     return this.tx(() => {

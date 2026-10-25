@@ -65,8 +65,10 @@ class MnnInstallation:
             for name,expected in json.loads(lock.read_text(encoding='utf-8'))['files'].items():
                 if name not in ('tokenizer.json','tokenizer_config.json') or hashlib.sha256((tokenizer/name).read_bytes()).hexdigest()!=expected:raise ValueError('mnn-tokenizer-digest-mismatch')
         self.directory.mkdir(parents=True,exist_ok=True)
+        source=self.root/'vendor/dsf-mnn/SOURCE.json'
+        version=json.loads(source.read_text(encoding='utf-8')).get('integrationVersion') if source.is_file() else old.get('integrationVersion','1.2.0')
         # Turning off background work retains the sole MNN graph; no live legacy fallback.
-        state={**old,**changes,'schema':'dsf-mnn-activation/1','integrationVersion':'1.2.0','runtimeVersion':'0.2.0-rc.2','enabled':old['enabled'] or enabled,'paused':changes.get('paused',not enabled if 'enabled' in changes else old.get('paused',True)),'tokenizer':str(tokenizer),'selfAutoCommit':False,'basicFallback':False}
+        state={**old,**changes,'schema':'dsf-mnn-activation/1','integrationVersion':version,'runtimeVersion':'0.2.0-rc.2','enabled':old['enabled'] or enabled,'paused':changes.get('paused',not enabled if 'enabled' in changes else old.get('paused',True)),'tokenizer':str(tokenizer),'selfAutoCommit':False,'basicFallback':False}
         state.pop('states',None);state.pop('memoryNetwork',None)
         if state['enabled'] and not old['enabled'] and (self.data/'cognitive/cognitive.sqlite').exists():
             self.invoke('import',{'database':str(self.data/'cognitive/cognitive.sqlite')},tokenizer)

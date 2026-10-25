@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {PressureGuardian,pressure,SOFT_NOTICE,HARD_NOTICE,committedRecovery,runtimeResumeSource} from '../src/mnn/guardian.js';
+import {PressureGuardian,pressure,SOFT_NOTICE,HARD_NOTICE,committedRecovery,runtimeResumeSource,confirmRestNoop} from '../src/mnn/guardian.js';
 import {Session} from '../.runtime/node_modules/@deepseek-ai/dsh-session/lib/index.js';
 import {createUserMessage} from '../.runtime/node_modules/@deepseek-ai/dsh-llm/lib/index.js';
 const sample=(ratio)=>({provider:'deepseek-official',model:'deepseek-flash',contextWindow:100000,outputReserve:1000,safetyTokens:0,exactTokens:ratio*100000-1000,meter:{totalTokens:0,baseline:{kind:'estimated'}}});
@@ -21,4 +21,17 @@ test('native Session accepts runtime recovery without an RPC and preserves a rea
  assert.throws(()=>session.append('user/message',createUserMessage({source:{kind:'mnn-runtime',resumesRpcId:undefined},content:[]}),{surfaceOp:'append'}),/non-JSON/);
  assert.doesNotThrow(()=>session.append('user/message',createUserMessage({source:runtimeResumeSource(),content:[]}),{surfaceOp:'append'}));
  assert.deepEqual(runtimeResumeSource('request'),{kind:'mnn-runtime',resumesRpcId:'request'});
+});
+test('rest no-op requires durable memory and independently measured safe native headroom',()=>{
+ const prepared={memoryPersisted:true,compactionNoop:'acr-no-safe-rolling-range'};
+ assert.equal(confirmRestNoop(prepared,sample(.2)).ratio,.2);
+ for(const value of [.61,.85,.95])assert.throws(()=>confirmRestNoop(prepared,sample(value)),/insufficient-headroom/);
+ assert.throws(()=>confirmRestNoop(prepared,{...sample(.2),unpricedMedia:true}),/insufficient-headroom/);
+ assert.throws(()=>confirmRestNoop({...prepared,memoryPersisted:false},sample(.2)),/not-durable/);
+ assert.throws(()=>confirmRestNoop({...prepared,compactionNoop:'invalid-evidence'},sample(.2)),/not-durable/);
+});
+test('a short already-rebuilt session completes dreaming without a duplicate checkpoint or lost queued input',async t=>{
+ const {g}=fixture(t);g.change('same','REST_PENDING','scheduled-dreaming');const queue=['new input'],events=['original checkpoint'];
+ const result=await g.rest('same',{safe:true,dream:async()=>({memoryPersisted:true,compactionNoop:'acr-no-useful-range'}),reconstruct:async prepared=>confirmRestNoop(prepared,sample(.2)),measure:async()=>sample(.2)});
+ assert.equal(result.state,'NORMAL');assert.deepEqual(events,['original checkpoint']);assert.deepEqual(queue,['new input']);assert.equal(g.blocked('same'),false);
 });

@@ -5,6 +5,12 @@ import { randomUUID } from 'node:crypto';
 
 export const SOFT_NOTICE = '你需要休息一小会了，下次回复后会进行小憩。';
 export const HARD_NOTICE = '你必须休息了。';
+export function confirmRestNoop(prepared,sample,resume=.60){
+  if(!prepared?.memoryPersisted||!['acr-no-safe-rolling-range','acr-no-useful-range','checkpoint-not-smaller'].includes(prepared.compactionNoop))throw Error('mnn-plan-not-durable');
+  const p=pressure(sample);
+  if(p.reason!=='measured'||p.ratio>resume)throw Error('mnn-insufficient-headroom-or-fixed-context');
+  return p;
+}
 export function runtimeResumeSource(rpcId){return {kind:'mnn-runtime',...(typeof rpcId==='string'&&rpcId?{resumesRpcId:rpcId}:{})};}
 export function committedRecovery(row,events) {
   if(!['RECOVERY_PENDING','DREAMING','RECONSTRUCTING'].includes(row.state))return false;
@@ -90,7 +96,7 @@ export class PressureGuardian {
       this.change(id,'RECONSTRUCTING','memory-durable');
       await reconstruct(prepared);const p=pressure(await measure());
       if(p.ratio>this.config.resume)throw Error('mnn-insufficient-headroom-or-fixed-context');
-      this.change(id,'NORMAL','rest-completed',{attempts:0,retry_at:0,owner:null,lease:0});
+      this.change(id,'NORMAL','rest-completed',{measurement:JSON.stringify(p),attempts:0,retry_at:0,owner:null,lease:0});
       return {state:'NORMAL',pressure:p};
     } catch(error) {
       row=this.get(id);const code=/^mnn-[a-z0-9-]+$/.test(error.message??'')?error.message:'mnn-rest-failed';

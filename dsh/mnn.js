@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { PressureGuardian,SOFT_NOTICE,HARD_NOTICE,committedRecovery,runtimeResumeSource } from '../src/mnn/guardian.js';
+import { PressureGuardian,SOFT_NOTICE,HARD_NOTICE,committedRecovery,runtimeResumeSource,confirmRestNoop } from '../src/mnn/guardian.js';
 import { MnnClient } from '../src/mnn/client.js';
 import { RuntimeStore } from '../src/runtime.js';
 import * as compaction from '../.runtime/node_modules/@deepseek-ai/dsh-compaction/lib/index.js';
@@ -49,6 +49,7 @@ export function mountMnn(ctx,dataDir,config) {
     if(agent.status!=='idle'||!guardian.shouldRest(agent.id))return;
     const resumeNeeded=guardian.get(agent.id).state!=='REST_PENDING';
     const previous=guardian.get(agent.id),priorWork=JSON.parse(previous.work??'{}');
+    let reconstructionSkipped=false;
     const alreadyCommitted=committedRecovery(previous,exportSession(agent.session).events);
     return agent.runMaintenance(async signal=>{
       const eventsBefore=exportSession(agent.session).events;
@@ -60,12 +61,18 @@ export function mountMnn(ctx,dataDir,config) {
           return client.call('dream',{export:exportSession(agent.session),options:{day:new Date().toISOString().slice(0,10),context_tokens:Math.floor(s.contextWindow*.5),output_reserve:s.outputReserve}},signal);
         },
         reconstruct:async prepared=>{
+          if(prepared.compactionNoop){confirmRestNoop(prepared,await measurement(agent),guardian.config.resume);reconstructionSkipped=true;return;}
           const plan=prepared.plan;if(!plan||!prepared.memoryPersisted)throw Error('mnn-plan-not-durable');
           await client.call('validate',{versions:plan.memory_versions},signal);
+          if(!alreadyCommitted){
+            const oldTokens=plan.shadowed_seqs.reduce((n,q)=>{const m=agent.session.deriveEventMessage(agent.session.eventAt(q));return n+(m?ctx.tokenMeter.estimateMessage(m):0);},0);
+            const replacement=llm.createUserMessage({source:{kind:'mnn-budget-probe'},content:[{type:'text',text:plan.checkpoint_text}]});
+            if(ctx.tokenMeter.estimateMessage(replacement)>=oldTokens){confirmRestNoop({...prepared,compactionNoop:'checkpoint-not-smaller'},await measurement(agent),guardian.config.resume);reconstructionSkipped=true;return;}
+          }
           const messages=alreadyCommitted?agent.session.deriveMessages():candidateMessages(agent,plan),tools=assemblies.get(agent.id)?.tools??ctx.tools.schemas(agent),settings=runtime.settings();
           let usage;const started=Date.now();
           for await(const part of ctx.llm.stream({provider:settings.provider,model:settings.model,reasoningEffort:'off',maxTokens:1,purpose:'compaction',sessionId:agent.id,messages,tools,signal}))if(part.type==='usage')usage=part.usage;
-          const input=usage?(usage.inputTokens??0)+(usage.cacheReadTokens??0)+(usage.cacheWriteTokens??0):null;
+          let input=usage?(usage.inputTokens??0)+(usage.cacheReadTokens??0)+(usage.cacheWriteTokens??0):null;
           guardian.db.prepare('INSERT INTO native_usage(session,run_id,body,created) VALUES(?,?,?,?)').run(agent.id,prepared.run_id,JSON.stringify({usage:usage??null,input_tokens:input,output_tokens:usage?.outputTokens??null,elapsed_ms:Date.now()-started,kind:'provider-budget-preflight'}),Date.now());
           if(!(input>0)||input+plan.budget.output_reserve>plan.budget.context_tokens)throw Error('mnn-provider-budget-unverified');
           plan.budget.provider_verified_input_tokens=input;plan.validated.provider_envelope_budget=true;plan.status='provider-verified';
@@ -74,14 +81,21 @@ export function mountMnn(ctx,dataDir,config) {
             await client.call('validate',{versions:plan.memory_versions},signal);
           }};
           if(!alreadyCommitted)await Engine.prototype.perform.call(backend,agent,signal);
+          if(plan.additional_regions?.length){
+            let finalUsage;const finalStarted=Date.now();
+            for await(const part of ctx.llm.stream({provider:settings.provider,model:settings.model,reasoningEffort:'off',maxTokens:1,purpose:'compaction',sessionId:agent.id,messages:agent.session.deriveMessages(),tools,signal}))if(part.type==='usage')finalUsage=part.usage;
+            const finalInput=finalUsage?(finalUsage.inputTokens??0)+(finalUsage.cacheReadTokens??0)+(finalUsage.cacheWriteTokens??0):null;
+            if(!(finalInput>0)||finalInput+plan.budget.output_reserve>plan.budget.context_tokens)throw Error('mnn-provider-budget-unverified');
+            input=finalInput;guardian.db.prepare('INSERT INTO native_usage(session,run_id,body,created) VALUES(?,?,?,?)').run(agent.id,prepared.run_id,JSON.stringify({usage:finalUsage,input_tokens:input,output_tokens:finalUsage.outputTokens,elapsed_ms:Date.now()-finalStarted,kind:'provider-private-final-preflight'}),Date.now());
+          }
           verified.set(agent.id,{input,generation:agent.session.surface.contentGeneration});
           if(!isDeepStrictEqual(exportSession(agent.session).events.slice(0,eventsBefore.length),eventsBefore))throw Error('mnn-history-changed');
         },measure:()=>measurement(agent)});
       publish(agent.id);
       if(result?.state==='NORMAL')setTimeout(()=>{try{if(closed||agent.status!=='idle')return;
         if(agent.inbox.hasPending)agent.wakeDriver();
-        else if(resumeNeeded){const source=exportSession(agent.session).events.filter(e=>e.type==='user/message'&&e.data.source?.rpcId).at(-1)?.data.source;
-          agent.followup(llm.createUserMessage({source:runtimeResumeSource(source?.rpcId),content:[{type:'text',text:'MNN 已持久化记忆并重建活动上下文。根据 Carryover 与原始工具结果继续当前任务，不重复已有结果的外部操作；仍遵守原有授权与审批。'}]}));}
+        else if(resumeNeeded&&!reconstructionSkipped){const source=exportSession(agent.session).events.filter(e=>e.type==='user/message'&&e.data.source?.rpcId).at(-1)?.data.source;
+          agent.followup(llm.createUserMessage({source:runtimeResumeSource(source?.rpcId),content:[{type:'text',text:'短暂休息结束。继续未完成的事，不重复已经完成的对外操作，仍遵守原有授权。'}]}));}
         }catch{guardian.change(agent.id,'RECOVERY_PENDING','mnn-native-resume-failed');publish(agent.id);}
       },0);
       return result;

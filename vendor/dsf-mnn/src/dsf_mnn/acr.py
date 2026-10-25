@@ -14,7 +14,7 @@ class AdaptiveContextReconstruction:
         self.counter = counter
         self.context_tokens, self.output_reserve, self.exact_tokens = context_tokens, output_reserve, exact_tokens
 
-    def build(self, export, records, store, scope, dreaming, *, current_task=None):
+    def build(self, export, records, store, scope, dreaming, *, current_task=None, privacy_rebuild=False,privacy_region=None):
         if dreaming["snapshot_digest"] != digest(export["events"]):
             raise MemoryError("acr-dreaming-snapshot-mismatch")
         by_seq = {r["seq"]: r for r in records}
@@ -44,6 +44,12 @@ class AdaptiveContextReconstruction:
             end_index = cuts[-1]
             tail = [p for p in projected if p["seq"] in surface[end_index:]]
         shadowed = surface[start_index:end_index]
+        if privacy_rebuild:
+            shadowed=privacy_region if privacy_region is not None else surface[1:]
+            if not shadowed or any(by_surface.get(q,{}).get('message',{}).get('role')=='system' for q in shadowed):raise MemoryError('acr-private-system-boundary')
+            positions=[surface.index(q) for q in shadowed]
+            if positions!=list(range(positions[0],positions[-1]+1)):raise MemoryError('acr-private-noncontiguous-range')
+            tail=[]
         if not shadowed: raise MemoryError("acr-no-useful-range")
         retained = [p for p in projected if p["seq"] not in shadowed]
         nodes = store.nodes(scope)

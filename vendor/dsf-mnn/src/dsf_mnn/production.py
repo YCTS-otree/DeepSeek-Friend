@@ -17,11 +17,12 @@ from .formation import Formation
 from .remote import RemoteProvider
 from .token_budget import CpuTokenCounter
 from .atomic_io import atomic_json
+from .visibility import internal_diagnostic
 
 SHARED=Scope('dsf-whale','shared','all-native-sessions','dsf-production')
 
 def implementation_revision():
-    return hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in ('production.py','semantic.py','acr.py'))).hexdigest()
+    return hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in ('production.py','semantic.py','acr.py','visibility.py','evidence_recall.py'))).hexdigest()
 
 class ProductionMemory:
     def __init__(self,directory,dsf_root=None,tokenizer=None,*,provider=None,counter=None):
@@ -30,6 +31,7 @@ class ProductionMemory:
         self.root,self.tokenizer,self.provider,self.counter=dsf_root,tokenizer,provider,counter
         self.store.db.executescript('''CREATE TABLE IF NOT EXISTS native_sources(session TEXT,native_seq INTEGER,global_seq INTEGER UNIQUE,source_digest TEXT,PRIMARY KEY(session,native_seq));
             CREATE TABLE IF NOT EXISTS production_runs(id TEXT PRIMARY KEY,body TEXT NOT NULL);''')
+        self.store.db.execute('CREATE TABLE IF NOT EXISTS operator_hidden_sources(id TEXT PRIMARY KEY)')
     def close(self):self.store.close()
     def rebase(self,original):
         mapped=deepcopy(original);sid=original['session_id'];lookup={}
@@ -46,9 +48,14 @@ class ProductionMemory:
         mapped['surface']=[lookup[n] for n in original.get('surface',[])]
         return mapped,lookup
     def capture(self,export):
-        mapped,lookup=self.rebase(export);records=normalize_export(mapped)
+        mapped,lookup=self.rebase(export)
+        mapped['hidden_seqs']=[int(r[0].split(':',1)[1]) for r in self.store.db.execute("SELECT id FROM operator_hidden_sources WHERE id LIKE 'dsh-event:%'")]
+        records=normalize_export(mapped)
         with self.store.transaction():
-            for r in records:self.store.add_event(self.scope,Event(r['id'],r['seq'],r['text'],r['observed_at'],r['source_kind'],f"dsh://{export['session_id']}/event/{r['metadata']['native_seq']}",metadata=r['metadata']))
+            for r in records:
+                if r['metadata'].get('operator_only'):
+                    self.store.db.execute('INSERT OR IGNORE INTO operator_hidden_sources VALUES(?)',(r['id'],));continue
+                self.store.add_event(self.scope,Event(r['id'],r['seq'],r['text'],r['observed_at'],r['source_kind'],f"dsh://{export['session_id']}/event/{r['metadata']['native_seq']}",metadata=r['metadata']))
         return mapped,records,lookup
     def legacy_import(self,database):
         with sqlite3.connect(Path(database).as_uri()+'?mode=ro',uri=True) as old:
@@ -56,12 +63,14 @@ class ProductionMemory:
         refs={};counter=self.store.db.execute('SELECT COALESCE(MAX(seq),-1) FROM events').fetchone()[0]
         with self.store.transaction():
             for row in rows:
+                if internal_diagnostic(row['text']):continue
                 identifier='legacy-event:'+row['id'];refs[row['id']]=identifier
                 if self.store.db.execute('SELECT 1 FROM events WHERE scope=? AND id=?',(self.scope.key,identifier)).fetchone():continue
                 counter+=1;source={'user_statement':'user_statement','tool_result':'tool_verified','external_document':'external'}.get(row['source'],'inference')
                 self.store.add_event(self.scope,Event(identifier,counter,row['text'],datetime.fromtimestamp(row['at']/1000,timezone.utc).isoformat(),source,'dsf-legacy://'+row['session']+'/'+row['seq'],metadata={'legacy_source':row['source'],'dsh_type':'user/message' if source=='user_statement' else 'legacy','duplicate_representation_possible':True}))
             imported=[]
             for row in memories:
+                if internal_diagnostic(row['text']):continue
                 evidence=json.loads(row['evidence']);sources=[refs[x['id'] if isinstance(x,dict) else x] for x in evidence if (x['id'] if isinstance(x,dict) else x) in refs];identifier='legacy:'+row['id']
                 if not sources or self.store.db.execute('SELECT 1 FROM nodes WHERE scope=? AND id=?',(self.scope.key,identifier)).fetchone():continue
                 self.store.add_node(self.scope,Node(identifier,'Fact',row['text'],list(dict.fromkeys(sources)),metadata={'legacy_id':row['id'],'epistemic':row['source'],'layer':'long_term'}));imported.append(identifier)
@@ -103,12 +112,50 @@ class ProductionMemory:
         history={**history,'snapshot_digest':digest(mapped['events'])};history_file=folder/'history.json';atomic_json(history_file,history)
         result={'run_id':run_id,'session_id':original['session_id'],'implementation_revision':revision,'memoryPersisted':True,'self_update':'noop','semantic_file':history_file.relative_to(self.directory).as_posix(),'snapshot_digest':digest(original['events']),'carryover':history['consolidation']['carryover']}
         if reconstruct:
-            plan=AdaptiveContextReconstruction(counter,context_tokens=context_tokens,output_reserve=output_reserve).build(mapped,records,self.store,self.scope,history,current_task=current_task)
-            reverse={v:k for k,v in lookup.items()}
-            for key in ('original_surface','tail_seqs','shadowed_seqs'):plan[key]=[reverse[n] for n in plan[key]]
-            for key in ('system_head_seq','system_source_seq'):plan[key]=reverse[plan[key]]
-            plan['snapshot_digest']=digest(original['events']);plan['run_id']=run_id;plan['checkpoint']['run_id']=run_id;plan['checkpoint_text']=canonical(plan['checkpoint']);result['plan']=plan
+            try:
+                plan=AdaptiveContextReconstruction(counter,context_tokens=context_tokens,output_reserve=output_reserve).build(mapped,records,self.store,self.scope,history,current_task=current_task)
+            except MemoryError as error:
+                if str(error) not in ('acr-no-safe-rolling-range','acr-no-useful-range'):raise
+                # Memory is durable. Only the host's native pressure gate may accept
+                # keeping an already-small Surface; this is not a compaction fallback.
+                result['compactionNoop']=str(error)
+            else:
+                reverse={v:k for k,v in lookup.items()}
+                for key in ('original_surface','tail_seqs','shadowed_seqs'):plan[key]=[reverse[n] for n in plan[key]]
+                for key in ('system_head_seq','system_source_seq'):plan[key]=reverse[plan[key]]
+                plan['snapshot_digest']=digest(original['events']);plan['run_id']=run_id;plan['checkpoint']['run_id']=run_id;plan['checkpoint_text']=canonical(plan['checkpoint']);result['plan']=plan
         self.store.db.execute('INSERT INTO production_runs VALUES(?,?)',(run_id,canonical(result)));self.store.db.execute('PRAGMA wal_checkpoint(FULL)');return result
+    def privacy_prepare(self,original,context_tokens=500000,output_reserve=8192,region_budgets=None):
+        mapped,records,lookup=self.capture(original)
+        nodes=[n for n in self.store.nodes(self.scope) if n['status']=='active' and not internal_diagnostic(canonical(n))]
+        themes=[{'title':n['content'][:80],'summary':n['content'],'memory_refs':[n['id']]} for n in nodes[:12]]
+        history={'snapshot_digest':digest(mapped['events']),'consolidation':{'themes':themes,'carryover':[],'decisions':[],'self_update':None},'memory_versions':{n['id']:n['version'] for n in nodes}}
+        counter=self.counter or CpuTokenCounter(self.tokenizer)
+        by_seq={p['seq']:p['message'] for p in mapped['projected']};regions=[];region=[]
+        for q in mapped['surface']:
+            if (by_seq.get(q) or {}).get('role')=='system':
+                if region:regions.append(region)
+                region=[]
+            else:region.append(q)
+        if region:regions.append(region)
+        reverse={v:k for k,v in lookup.items()};budgets={int(k):v for k,v in (region_budgets or {}).items()}
+        def size(r):return budgets.get(reverse[r[0]],sum(counter.count_text(canonical(by_seq.get(q))) for q in r))
+        regions.sort(key=size,reverse=True)
+        if not regions:raise MemoryError('acr-no-useful-range')
+        primary=regions.pop(0)
+        plan=AdaptiveContextReconstruction(counter,context_tokens=context_tokens,output_reserve=output_reserve,exact_tokens=512).build(mapped,records,self.store,self.scope,history,privacy_rebuild=True,privacy_region=primary)
+        reverse={v:k for k,v in lookup.items()}
+        for key in ('original_surface','tail_seqs','shadowed_seqs'):plan[key]=[reverse[n] for n in plan[key]]
+        for key in ('system_head_seq','system_source_seq'):plan[key]=reverse[plan[key]]
+        identifier=digest(['private-reconstruction',digest(original['events']),implementation_revision()])
+        plan['snapshot_digest']=digest(original['events']);plan['run_id']=identifier;plan['checkpoint']['run_id']=identifier;plan['checkpoint_text']=canonical(plan['checkpoint'])
+        if regions:
+            plan['checkpoint']['run_id']='private-stage:'+identifier;plan['checkpoint_text']=canonical(plan['checkpoint'])
+            regions.sort(key=size)
+            plan['additional_regions']=[{'shadowed_seqs':[reverse[q] for q in r],'checkpoint_text':canonical({'run_id':identifier,'note':'继续。'}) if i==len(regions)-1 else '继续。'} for i,r in enumerate(regions)]
+        folder=self.directory/'runs'/identifier;folder.mkdir(parents=True,exist_ok=True);atomic_json(folder/'history.json',history)
+        result={'run_id':identifier,'session_id':original['session_id'],'memoryPersisted':True,'self_update':'noop','carryover':[],'semantic_file':(folder/'history.json').relative_to(self.directory).as_posix(),'plan':plan}
+        self.store.db.execute('INSERT OR REPLACE INTO production_runs VALUES(?,?)',(identifier,canonical(result)));self.store.db.execute('PRAGMA wal_checkpoint(FULL)');return result
     def handle(self,request):
         action=request['action']
         if action=='capture':return {'events':len(self.capture(request['export'])[1])}
@@ -127,6 +174,7 @@ class ProductionMemory:
             return SpontaneousAssociation(self.store,Recall(self.store)).consider(self.scope,AssociationCue('input:'+source['id'],source['text'][:4000],(source['id'],),'input'))
         if action=='associate':return SpontaneousAssociation(self.store,Recall(self.store)).consider(self.scope,AssociationCue('input:'+digest([request['query'],request['source_id']]),request['query'],(request['source_id'],),'input'))
         if action=='dream':return self.dreaming(request['export'],**request.get('options',{}))
+        if action=='privacy_prepare':return self.privacy_prepare(request['export'],**request.get('options',{}))
         if action=='import':return self.legacy_import(request['database'])
         if action=='validate':
             for key,version in request['versions'].items():

@@ -42,7 +42,7 @@ class EvidenceRecall:
         documents = []
         for row in rows:
             event = json.loads(row[0])
-            if event.get('metadata',{}).get('self_read'): continue
+            if event.get('metadata',{}).get('self_read') or event.get('metadata',{}).get('operator_only'): continue
             text = semantic_body(event)
             if text:
                 documents.append((event, text, Counter(tokenize(text))))

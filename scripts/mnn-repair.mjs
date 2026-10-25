@@ -32,6 +32,16 @@ try{
  const window=Math.min(1000000,original.requestContext()?.contextWindow??1000000);
  await registerRemoteProvider(kernel,root,{contextWindow:window,maxTokens:8192,thinking:'enabled'});
  mnn=mountMnn(kernel.ctx,data,{enabled:true,paused:true,tokenizer});
+ if(process.argv.includes('--private-context')){
+  const call=mnn.client.call.bind(mnn.client);
+  mnn.client.call=(action,args={},signal)=>{
+   if(action!=='dream')return call(action,args,signal);
+   const projected=new Map(args.export.projected.map(p=>[p.seq,p.message])),regions=[];let region=[];
+   for(const seq of args.export.surface){if(projected.get(seq)?.role==='system'){if(region.length)regions.push(region);region=[];}else region.push(seq);}if(region.length)regions.push(region);
+   const budgets=Object.fromEntries(regions.map(r=>[r[0],r.reduce((total,q)=>total+(projected.get(q)?kernel.ctx.tokenMeter.estimateMessage(projected.get(q)):0),0)]));
+   return call('privacy_prepare',{export:args.export,options:{context_tokens:args.options.context_tokens,output_reserve:args.options.output_reserve,region_budgets:budgets}},signal);
+  };
+ }
  // Disable every wake path before native resume publishes the Agent. Do not replay any Inbox.
  kernel.ctx.on('agent/created',({agent})=>{agent.wakeDriver=()=>{};agent.followup=()=>{throw Error('mnn-repair-no-chat-submission');};});
  const owned=await kernel.loop.resume(kernel.ctx,{resumeSessionId:sid,agentOptions:{provider:'deepseek-official',model:'deepseek-flash',maxTokens:8192,reasoningEffort:'off'}});
@@ -42,6 +52,10 @@ try{
  await kernel.ctx.sessions.flush(agent.session);
  const after=exportSession(agent.session);
  report.events_after=after.events.length;report.prefix_equal=isDeepStrictEqual(after.events.slice(0,before.events.length),before.events);
+ if(process.argv.includes('--private-context')){
+  const visible=JSON.stringify(agent.session.deriveMessages().filter(m=>m.role!=='system'));
+  report.private_visible_clean=!/CONTEXT_WINDOW_EXCEEDED|recorded_runtime_error|上下文那段|小[“"「]?手术/.test(visible);
+ }
  report.after_pressure=pressure(await mnn.measurement(agent));
  report.system_preserved=isDeepStrictEqual(system,agent.session.deriveMessages().filter(x=>x.role==='system').at(-1));
  report.pending_after=agent.inbox.nextTurn.length+agent.inbox.nextStep.length;
@@ -49,7 +63,7 @@ try{
  const prepared=await mnn.client.call('prepared',{run_id:report.work.run_id});
  report.memory_persisted=prepared.memoryPersisted;report.carryover_present=Boolean(prepared.carryover);report.self_update=prepared.self_update;
  report.self_after=await selfDigest();report.self_unchanged=report.self_after===report.self_before;
- report.success=report.prefix_equal&&report.system_preserved&&report.self_unchanged&&report.memory_persisted&&report.carryover_present&&report.after_pressure.ratio<=.60&&report.pending_before===report.pending_after;
+ report.success=report.prefix_equal&&report.system_preserved&&report.self_unchanged&&report.memory_persisted&&report.carryover_present&&report.after_pressure.ratio<=.60&&report.pending_before===report.pending_after&&report.private_visible_clean!==false;
  if(!report.success)throw Error('mnn-formal-postconditions');
 }catch(error){report.success=false;report.error=/^mnn-[-a-z0-9]+$/.test(error.message??'')?error.message:'mnn-formal-repair-failed';await fs.writeFile(path.join(run,'private-failure.json'),JSON.stringify({message:error.message,stack:error.stack}));}
 finally{

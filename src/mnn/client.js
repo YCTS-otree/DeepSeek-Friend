@@ -7,6 +7,7 @@ export function mnnSettings(dataDir) {
   const file=path.join(dataDir,'cognitive/mnn/activation.json');
   if(!fs.existsSync(file))return {enabled:false};
   const c=JSON.parse(fs.readFileSync(file,'utf8'));
+  if(c.privateRepairPending)throw Error('mnn-private-repair-required');
   if(c.schema!=='dsf-mnn-activation/1'||c.runtimeVersion!=='0.2.0-rc.2'||typeof c.enabled!=='boolean'||typeof c.tokenizer!=='string')throw Error('mnn-activation-invalid');
   return c;
 }

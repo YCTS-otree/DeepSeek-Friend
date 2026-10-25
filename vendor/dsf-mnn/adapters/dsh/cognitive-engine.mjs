@@ -61,6 +61,10 @@ export function cognitiveEngineClass({ CompactionEngine, CompactionId, compactCh
         });
         const endEvent = session.append('compaction/end', lifecycle); closed = true;
         await this.persist(session);
+        for(const extra of plan.additional_regions??[]){
+          const following={...plan,...extra,additional_regions:undefined,original_surface:[...session.surface.nodes]};
+          await MnnCognitiveCompactionEngine.prototype.perform.call({...this,plan:following},agent,signal);
+        }
         return { compactionId: id, startSeq: startEvent.seq, summarySeq: summaryEvent.seq, endSeq: endEvent.seq, summary,
           shadowedRange: { start, end }, shadowedSeqs: plan.shadowed_seqs, shadowedTokenCount };
       } catch (error) {
