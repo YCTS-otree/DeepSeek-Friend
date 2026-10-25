@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import{createNativeKernel}from'../vendor/dsf-mnn/adapters/dsh/native-kernel.mjs';import{cognitiveEngineClass}from'../vendor/dsf-mnn/adapters/dsh/cognitive-engine.mjs';import{MnnClient}from'../src/mnn/client.js';import{exportSession}from'../dsh/mnn.js';
 test('native private reconstruction hides old diagnostic surface and preserves raw prefix, identity and session',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsf-private-native-')),kernel=await createNativeKernel(path.resolve('.runtime/node_modules'),path.join(dir,'sessions'));
- const client=new MnnClient(path.join(dir,'memory'),{tokenizer:path.resolve('.runtime/mnn-tokenizer')});
+ const client=new MnnClient(path.join(dir,'memory'),{tokenizer:path.resolve('.runtime/mnn-tokenizer'),standalone:true});
  try{
   const s=kernel.sessionModule.Session.create('privacy-synthetic'),llm=kernel.llmModule;
   s.append('turn/start',{turn:1});s.append('step/start',{turn:1,step:1});s.append('system/message',{turn:1,step:1,message:llm.createSystemMessage('original Core and Self')},{surfaceOp:'append'});

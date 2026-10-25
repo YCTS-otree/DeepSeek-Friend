@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import uuid
 from contextlib import closing
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts import dsf
@@ -68,16 +69,17 @@ class MnnInstallation:
         source=self.root/'vendor/dsf-mnn/SOURCE.json'
         version=json.loads(source.read_text(encoding='utf-8')).get('integrationVersion') if source.is_file() else old.get('integrationVersion','1.2.0')
         # Turning off background work retains the sole MNN graph; no live legacy fallback.
-        state={**old,**changes,'schema':'dsf-mnn-activation/1','integrationVersion':version,'runtimeVersion':'0.2.0-rc.2','enabled':old['enabled'] or enabled,'paused':changes.get('paused',not enabled if 'enabled' in changes else old.get('paused',True)),'tokenizer':str(tokenizer),'selfAutoCommit':False,'basicFallback':False}
+        state={**old,**changes,'schema':'dsf-mnn-activation/1','integrationVersion':version,'runtimeVersion':'0.2.0-rc.2','generation':old.get('generation') or str(uuid.uuid4()),'enabled':old['enabled'] or enabled,'paused':changes.get('paused',not enabled if 'enabled' in changes else old.get('paused',True)),'tokenizer':str(tokenizer),'selfAutoCommit':False,'basicFallback':False}
         state.pop('states',None);state.pop('memoryNetwork',None)
         if state['enabled'] and not old['enabled'] and (self.data/'cognitive/cognitive.sqlite').exists():
-            self.invoke('import',{'database':str(self.data/'cognitive/cognitive.sqlite')},tokenizer)
+            self.invoke('import',{'database':str(self.data/'cognitive/cognitive.sqlite')},tokenizer,generation=state['generation'])
         partial=self.marker.with_suffix('.partial');partial.write_text(json.dumps(state,ensure_ascii=False,indent=2),encoding='utf-8');partial.replace(self.marker)
         return self.status()
-    def invoke(self,action,args,tokenizer=None):
+    def invoke(self,action,args,tokenizer=None,generation=None):
         from os import environ
         env={**environ,'PYTHONPATH':str(self.root/'vendor/dsf-mnn/src'),'PYTHONIOENCODING':'utf-8'}
         command=[sys.executable,'-m','dsf_mnn.production_cli','--directory',str(self.directory),'--dsf-root',str(self.root),'--tokenizer',str(tokenizer or self.root/'.runtime/mnn-tokenizer')]
+        policy=self.status();command+=['--registry',str(self.data/'bridge.sqlite'),'--generation',generation or policy.get('generation','')]
         result=subprocess.run(command,input=json.dumps({'action':action,**args})+'\n',capture_output=True,text=True,encoding='utf-8',env=env,timeout=120)
         try:response=json.loads(result.stdout)
         except Exception:raise ValueError('mnn-install-worker-failed') from None

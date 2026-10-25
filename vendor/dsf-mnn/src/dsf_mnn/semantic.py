@@ -185,13 +185,14 @@ def chunk_history(export, records, counter, *, input_tokens=12000):
 
 
 class SemanticDreaming:
-    def __init__(self, store, scope, provider, counter, output, *, input_tokens=12000, concurrency=3):
+    def __init__(self, store, scope, provider, counter, output, *, input_tokens=12000, concurrency=3,before_commit=None):
         self.store, self.scope, self.provider, self.counter = store, scope, provider, counter
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
         self.input_tokens, self.concurrency = input_tokens, concurrency
         self.embedding = HashEmbedding()
         self.formation = Formation(store, self.embedding)
+        self.before_commit=before_commit or (lambda:None)
 
     def validate_evidence(self, evidence, records, allowed):
         refs = []
@@ -212,6 +213,7 @@ class SemanticDreaming:
             raise MemoryError("semantic-unsupported-exact-parameter")
 
     def commit_notes(self, response, records, allowed, chunk_id, receipt_key=None):
+        self.before_commit()
         accepted, rejected, deduplicated = [], [], 0
         if not isinstance(response.get("notes"), list) or len(response["notes"]) > 12:
             raise MemoryError("semantic-note-schema")
@@ -382,6 +384,7 @@ class SemanticDreaming:
             consolidated.append(result)
         consolidation = {k: [item for result in consolidated for item in result[k]] for k in ("themes", "carryover", "decisions")}
         consolidation["self_update"] = None
+        self.before_commit()
         with self.store.transaction():
             for item in consolidation["carryover"]:
                 refs = list(dict.fromkeys(r for memory in item["memory_refs"] for r in self.store.node(self.scope, memory)["source_refs"]))

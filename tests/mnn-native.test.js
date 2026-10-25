@@ -23,7 +23,7 @@ test('native Inbox accepts concurrent input during MNN maintenance without losin
    }
    return{state:'noop',proposals:[]};
   };
-  mnn=mountMnn(kernel.ctx,path.join(dir,'data'),{enabled:true,paused:true,tokenizer:'mock'});
+  mnn=mountMnn(kernel.ctx,path.join(dir,'data'),{enabled:true,paused:true,tokenizer:'mock'},{standalone:true});
   const agent=await kernel.loop.create('native-inbox-race',{provider:'deepseek-official',model:'deepseek-flash'});
   agent.wakeDriver=()=>{wakes++;};
   const s=agent.session,{createSystemMessage,createUserMessage}=kernel.llmModule;

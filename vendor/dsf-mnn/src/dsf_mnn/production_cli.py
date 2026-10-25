@@ -3,7 +3,10 @@ from .production import ProductionMemory
 def main():
     sys.stdout.reconfigure(encoding='utf-8');parser=argparse.ArgumentParser()
     parser.add_argument('--directory',required=True);parser.add_argument('--dsf-root',required=True);parser.add_argument('--tokenizer',required=True)
-    args=parser.parse_args();memory=ProductionMemory(args.directory,args.dsf_root,args.tokenizer)
+    parser.add_argument('--registry');parser.add_argument('--session-kind',default='conversation');parser.add_argument('--generation');parser.add_argument('--standalone',action='store_true')
+    args=parser.parse_args()
+    if not args.standalone and not args.registry:parser.error('source-registry-required')
+    memory=ProductionMemory(args.directory,args.dsf_root,args.tokenizer,registry=None if args.standalone else args.registry,session_kind=args.session_kind,generation=args.generation)
     try:
         for line in sys.stdin:
             request={}

@@ -16,6 +16,7 @@ export const COGNITIVE_TOOLS = ['self_model_read', 'self_model_propose', 'self_m
 
 export function installCognitive(ctx, store, config, { worker = false, core = '', mnn = null } = {}) {
   const resolve = agent => {
+    if(mnn?.allowed&&!mnn.allowed(agent?.id))throw new Error('cognitive-session-inactive');
     const binding = store.binding(agent?.id);
     if (!binding || binding.kind !== (worker ? 'worker' : 'conversation')) throw new Error('cognitive-session-unbound');
     return binding;
@@ -103,7 +104,7 @@ export function apply(ctx, options = {}) {
   const store = new CognitiveStore(dir, config);
   ctx.effect(() => () => store.close());
   const dataDir=path.dirname(dir),activation=mnnSettings(path.dirname(path.resolve(launch.dir)));
-  const mnn=activation.enabled?mountMnn(ctx,dataDir,activation):null;
+  const mnn=activation.enabled?mountMnn(ctx,dataDir,activation,{registryFile:path.join(path.dirname(path.resolve(launch.dir)),'bridge.sqlite'),kind:options.test?'test':'conversation'}):null;
   if(launch.interaction!==false)mountInteraction(ctx,dataDir);
   installCognitive(ctx, store, config, { core,mnn });
 }

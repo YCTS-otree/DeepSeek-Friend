@@ -9,9 +9,11 @@ import {DshClient} from '../src/dsh.js';
 import {RuntimeStore} from '../src/runtime.js';
 import {CognitiveStore} from '../src/cognitive/store.js';
 import {loadConfig} from '../src/config.js';
+import {Store} from '../src/store.js';
 const root=fileURLToPath(new URL('..',import.meta.url)),run=path.join(root,'.research/mnn-v120/runtime-'+randomUUID()),data=path.join(run,'data');
 await fs.mkdir(path.join(data,'cognitive/mnn'),{recursive:true});
-await fs.writeFile(path.join(data,'cognitive/mnn/activation.json'),JSON.stringify({schema:'dsf-mnn-activation/1',enabled:true,paused:true,runtimeVersion:'0.2.0-rc.2',tokenizer:path.join(root,'.research/mnn-v120/tokenizer')}));
+const generation=randomUUID(),registry=new Store(path.join(data,'bridge.sqlite'));registry.set('mnn-generation',generation);registry.close();
+await fs.writeFile(path.join(data,'cognitive/mnn/activation.json'),JSON.stringify({schema:'dsf-mnn-activation/1',enabled:true,paused:true,generation,runtimeVersion:'0.2.0-rc.2',tokenizer:path.join(root,'.research/mnn-v120/tokenizer')}));
 const baseUrl='http://127.0.0.1:3094',config=path.join(run,'config.json');
 await fs.writeFile(config,JSON.stringify({dataDir:data,dsh:{baseUrl,cwd:path.join(run,'workspace')},weixin:{enabled:false},qq:{enabled:false}}));
 const child=spawn(process.execPath,['scripts/dsh.js','start'],{cwd:root,env:{...process.env,BRIDGE_CONFIG:config,BRIDGE_LAUNCHER:'1',DS_FRIEND_DSH_HOME:path.join(run,'home')},stdio:['pipe','pipe','pipe'],windowsHide:true});
@@ -25,7 +27,9 @@ try{
  const credential=loadCredentials(data,'dsh-connection.json');client=new DshClient({baseUrl,cookie:credential.cookie,timeoutMs:15000});
  await client.auth();const presets=await client.rpc('agentPresets/list',{});
  report.preset_count=Array.isArray(presets)?presets.length:Object.keys(presets??{}).length;
- const id=randomUUID();await client.rpc('session/create',{sessionId:id,cwd:path.join(run,'workspace'),agentPreset:'weixin'});
+ const id=randomUUID(),source=new Store(path.join(data,'bridge.sqlite'));
+ source.db.prepare("INSERT INTO chat_sessions(session,title,created,archived,kind) VALUES(?,'synthetic runtime test',?,0,'conversation')").run(id,Date.now());source.close();
+ await client.rpc('session/create',{sessionId:id,cwd:path.join(run,'workspace'),agentPreset:'weixin'});
  report.agent_created=true;report.session_id=id;report.success=true;
  if(process.argv.includes('--live')){
   const c=loadConfig(config),runtime=new RuntimeStore(data),memory=new CognitiveStore(path.join(data,'cognitive'),c.cognitive);

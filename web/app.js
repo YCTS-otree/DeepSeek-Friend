@@ -25,6 +25,7 @@ const errors = {
   'qr-expired': '二维码已多次过期，请重新扫码。',
   'launcher-busy': '正在处理服务操作，请稍候。',
   'session-busy': '当前仍有任务、审批或待发送消息。请先等其结束；结果不明的任务需在本机核对后处理。',
+  'session-history-erased': '此会话正文已按要求清除，仅保留归档元数据，不能恢复执行。',
   'session-active-archive': '先新建或切换到其他会话，当前会话才会归档。',
   'session-result-unknown': '会话操作结果暂未确认，请刷新列表核对，避免重复新建。',
   'bridge-not-ready': '请先启动服务，再发送测试消息或唤醒她。',

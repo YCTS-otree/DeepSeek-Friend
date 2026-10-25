@@ -6,6 +6,7 @@ import { RuntimeStore } from '../src/runtime.js';
 import * as compaction from '../.runtime/node_modules/@deepseek-ai/dsh-compaction/lib/index.js';
 import * as llm from '../.runtime/node_modules/@deepseek-ai/dsh-llm/lib/index.js';
 import { cognitiveEngineClass } from '../vendor/dsf-mnn/adapters/dsh/cognitive-engine.mjs';
+import {sourceRegistry} from '../src/mnn/registry.js';
 
 export function exportSession(session) {
   const events=Array.from({length:session.seq},(_,seq)=>session.eventAt(seq));
@@ -20,8 +21,10 @@ export function candidateMessages(agent,plan) {
   }
   return messages;
 }
-export function mountMnn(ctx,dataDir,config) {
-  const client=new MnnClient(path.join(dataDir,'cognitive/mnn'),config);
+export function mountMnn(ctx,dataDir,config,{registryFile=path.join(dataDir,'bridge.sqlite'),kind='conversation',standalone=false}={}) {
+  const registry=sourceRegistry(registryFile,{kind,generation:config.generation,standalone});
+  const allowed=id=>registry.allowed(id);
+  const client=new MnnClient(path.join(dataDir,'cognitive/mnn'),{...config,registryFile,sessionKind:kind,standalone});
   const guardian=new PressureGuardian(path.join(dataDir,'cognitive/mnn/pressure.sqlite'),config.guardian);
   const runtime=new RuntimeStore(dataDir),agents=new Map(),samples=new Map(),assemblies=new Map(),lastActivity=new Map(),verified=new Map();
   const associationPending=new Map(),associations=new Map();
@@ -32,6 +35,7 @@ export function mountMnn(ctx,dataDir,config) {
   const publish=id=>runtime.saveChannelSettings('mnn-pressure:'+id,{state:guardian.get(id).state,updated:Date.now(),error:guardian.get(id).error});
   const Engine=cognitiveEngineClass(compaction,llm);
   async function measurement(agent,assembly=assemblies.get(agent.id),messages=[]) {
+    if(!allowed(agent.id))throw Error('mnn-source-inactive');
     const settings=runtime.settings(),route={provider:settings.provider,model:settings.model,maxTokens:settings.maxTokens,reasoningEffort:settings.reasoningEffort};
     const prepared=await ctx.llm.prepareCall(route,new AbortController().signal);
     if(!(prepared.context?.contextWindow>0))throw Error('mnn-route-unverified');
@@ -46,6 +50,7 @@ export function mountMnn(ctx,dataDir,config) {
       unpricedMedia:hasMedia&&!ctx.llm.imageRequestPricing(prepared.config.provider,prepared.config.model)};
   }
   async function rest(agent,{forced=false}={}) {
+    if(!allowed(agent.id))return {state:'INACTIVE'};
     if(agent.status!=='idle'||!guardian.shouldRest(agent.id))return;
     const resumeNeeded=guardian.get(agent.id).state!=='REST_PENDING';
     const previous=guardian.get(agent.id),priorWork=JSON.parse(previous.work??'{}');
@@ -110,7 +115,7 @@ export function mountMnn(ctx,dataDir,config) {
   new MnnCompaction(ctx);
   ctx.on('agent/created',({agent})=>{agents.set(agent.id,agent);lastActivity.set(agent.id,Date.now());guardian.db.prepare('INSERT OR IGNORE INTO night_schedule VALUES(?,?)').run(agent.id,local().day);});
   ctx.on('system-prompt/assemble',async(assembly,context,next)=>{
-    const agent=context.agent;if(!agent||!agents.has(agent.id))return next();
+    const agent=context.agent;if(!agent||!agents.has(agent.id)||!allowed(agent.id))return next();
     assemblies.set(agent.id,assembly);
     try {
       const sample=await measurement(agent,assembly);samples.set(agent.id,sample);const row=guardian.observe(agent.id,sample);publish(agent.id);
@@ -120,6 +125,7 @@ export function mountMnn(ctx,dataDir,config) {
   });
   ctx.on('agent/pre-step',async(p,next)=>{
     if(!agents.has(p.agent.id))return next();
+    if(!allowed(p.agent.id))return {kind:'reject'};
     let allow=false;
     try{const sample=await measurement(p.agent,assemblies.get(p.agent.id),p.messages);samples.set(p.agent.id,sample);allow=guardian.observe(p.agent.id,sample).allowRequest;}catch{guardian.change(p.agent.id,'REST_REQUIRED','measurement-unavailable');}
     publish(p.agent.id);
@@ -129,6 +135,7 @@ export function mountMnn(ctx,dataDir,config) {
   ctx.on('agent/turn-stopping',async({agent})=>{if(guardian.shouldRest(agent.id))runtime.flag(agent.id,'rest');});
   ctx.on('agent/request-error',async({agent,failure},next)=>{if(/CONTEXT_WINDOW|context.window|overflow/i.test(JSON.stringify(failure))){guardian.change(agent.id,'REST_REQUIRED','provider-overflow');publish(agent.id);}return next();});
   ctx.on('session/event',(session,event)=>{
+    if(!allowed(session.id))return;
     if(event.type==='turn/end')lastActivity.set(session.id,Date.now());
     if(event.type==='user/message'&&!['mnn-runtime','compact-checkpoint','friend-continuation','mnn-continuity-context'].includes(event.data.source?.kind))associationPending.set(session.id,session);
   });
@@ -136,6 +143,7 @@ export function mountMnn(ctx,dataDir,config) {
     if(config.paused)return;
     guardian.recover();
     for(const agent of agents.values())if(agent.status==='idle') {
+      if(!allowed(agent.id)){associationPending.delete(agent.id);associations.delete(agent.id);continue;}
       const clock=local(),night=guardian.db.prepare('SELECT day FROM night_schedule WHERE session=?').get(agent.id);
       if(clock.time>=(config.dreamingTime??'03:00')&&night&&night.day<clock.day&&guardian.get(agent.id).state==='NORMAL'){
         guardian.change(agent.id,'REST_PENDING','scheduled-dreaming');guardian.db.prepare('UPDATE night_schedule SET day=? WHERE session=?').run(clock.day,agent.id);publish(agent.id);
@@ -155,6 +163,6 @@ export function mountMnn(ctx,dataDir,config) {
     }
   };
   let ticking=false;const timer=setInterval(()=>{if(!ticking){ticking=true;tick().catch(()=>{}).finally(()=>ticking=false);}},1000);timer.unref?.();
-  ctx.effect(()=>()=>{closed=true;clearInterval(timer);client.close();guardian.close();runtime.close();});
-  return {client,guardian,rest,measurement,associations};
+  ctx.effect(()=>()=>{closed=true;clearInterval(timer);client.close();guardian.close();runtime.close();registry.close();});
+  return {client,guardian,rest,measurement,associations,allowed,tick};
 }

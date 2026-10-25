@@ -25,6 +25,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS quarantine(account TEXT NOT NULL,id TEXT NOT NULL,reason TEXT NOT NULL,payload TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(account,id));
       CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state,retry_at,created);
       CREATE INDEX IF NOT EXISTS outbox_state ON outbox(state,retry_at,created);`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS inbound_tombstones(digest TEXT PRIMARY KEY)');
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('schema','1')").run();
     if (this.get('schema') !== '1') throw new Error('unsupported database schema');
     this.initSessions();
@@ -38,6 +39,7 @@ export class Store {
     this.db.exec("UPDATE outbox SET state='unknown',error='process-interrupted' WHERE state='sending'; UPDATE pending SET state='stale' WHERE state IN ('pending','answering')");
   }
   ingestQQ(account, user, messageId, text, images = [], actor, forwards = [], qqGroup) {
+    if(this.isErasedMessage(account,user,messageId))return;
     return this.tx(() => {
       const now = Date.now(), id = randomUUID();
       const inserted = this.db.prepare('INSERT OR IGNORE INTO jobs(id,account,user,message_id,payload,request_id,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, account, user, messageId, JSON.stringify({ channel: 'qq', text, supported: true, ...(images.length?{images}:{}),...(actor?{actor}:{}),...(forwards.length?{forwards}:{}),...(qqGroup?{qqGroup}:{}) }), randomUUID(), now, now);
@@ -52,6 +54,7 @@ export class Store {
       for (const m of response.msgs ?? []) {
         const user = m.from_user_id;
         if (m.message_type !== 1 || !user || !allowed.has(user) || m.group_id) continue;
+        if(typeof m.message_id==='string'&&this.isErasedMessage(account,user,m.message_id))continue;
         const invalid = typeof m.context_token !== 'string' || !m.context_token ? 'missing-context'
           : typeof m.message_id !== 'string' || !m.message_id ? 'missing-stable-id'
           : !Array.isArray(m.item_list) ? 'invalid-items' : null;
@@ -119,6 +122,7 @@ export class Store {
     });
   }
   session(id) { return typeof id === 'string' ? this.db.prepare('SELECT * FROM chat_sessions WHERE session=?').get(id) : undefined; }
+  isErasedMessage(account,user,id){const digest=createHash('sha256').update([account,user,String(id)].join('\0')).digest('hex');return Boolean(this.db.prepare('SELECT 1 FROM inbound_tombstones WHERE digest=?').get(digest));}
   currentSession(kind = 'conversation') { return this.db.prepare('SELECT * FROM chat_sessions WHERE archived=0 AND kind=?').get(kind); }
   mapping(account, user) { const row = this.currentSession(); return row && { ...row, account, user }; }
   ensureMapping(account, user) {
@@ -142,6 +146,7 @@ export class Store {
       return { entries: entries.map(e => ({ ...e, text: agentVisibleText(e.text), actor: JSON.parse(e.actor) })), hasMore: Boolean(entries.length && this.db.prepare('SELECT 1 FROM chat_entries WHERE session=? AND n<? LIMIT 1').get(args.session, entries[0].n)) };
     }
     if (!['create', 'switch', 'archive'].includes(action)) throw new BridgeError('session-action-invalid');
+    if(action==='switch'&&this.get('erased-session:'+args.session))throw new BridgeError('session-history-erased');
     return this.tx(() => {
       const kind = action === 'create' ? args.kind ?? 'conversation' : this.session(args.session)?.kind;
       if (!['conversation', 'test'].includes(kind)) throw new BridgeError('session-kind-invalid');

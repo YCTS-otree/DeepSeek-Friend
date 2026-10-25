@@ -14,6 +14,12 @@ test('atomic cursor and inbox persist across restart; duplicate pushes cannot cr
   assert.throws(() => reopened.tx(() => { reopened.set('cursor:' + account.accountId, 'uncommitted'); throw Error('crash'); }));
   assert.equal(reopened.get('cursor:' + account.accountId), before); reopened.close();
 });
+test('erased-message digests prevent historical redelivery without preserving old text',async t=>{
+ const f=fixture(t),{createHash}=await import('node:crypto');
+ const digest=createHash('sha256').update([account.accountId,'alice','old'].join('\0')).digest('hex');f.store.db.prepare('INSERT INTO inbound_tombstones VALUES(?)').run(digest);
+ f.ingest(incoming('old erased content','old'),incoming('new content','new'));
+ assert.equal(f.job('old'),undefined);assert.ok(f.job('new'));assert.equal(f.store.db.prepare('SELECT count(*) n FROM chat_entries WHERE text=?').get('old erased content').n,0);
+});
 test('unauthorized senders, bots, groups, and missing context are excluded', t => {
   const f = fixture(t);
   f.ingest(incoming('x', '1', 'mallory'), incoming('x', '2', 'alice', { group_id: 'group' }), incoming('x', '3', 'alice', { message_type: 2 }), incoming('x', '4', 'alice', { context_token: '' }));

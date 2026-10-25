@@ -108,3 +108,6 @@ DSH 的 submitting 状态可用同一 Session/requestId 重试；waiting 在事�
 ## v1.6.3 QQ 图片队列
 
 `qq-image-host` 表示图片地址未通过精确域名校验。官方 NT QQ CDN 已补齐 multimedia.nt.qq.com.cn；新失败会明确提示图片处理未提交 DSH，并允许后续消息继续。下载断流/超时会结束，不永久挂起。已有 review 需核对是否已经被 DSH 接受后受控恢复，不能批量重放或重建 Session。详见 [修复记录](incident-qq-image-queue.md)。
+## MNN 1.14.0 后台来源隔离
+
+归档不参与自动摄入；被用户明确清除的会话不能重新切换。`session-history-erased` 表示仅留空归档元数据。`mnn-generation-required`、`mnn-source-generation-mismatch` 或 `mnn-source-inactive-or-generation-mismatch` 应检查权威注册表和数据代际，不要通过手改 UUID 放行旧图谱；`mnn-private-repair-required` 表示维护尚未完成。专项永久清理仅能在明确删除授权下执行，见 [清理与验收记录](mnn-clean-generation-20261025.md)。

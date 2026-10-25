@@ -27,7 +27,7 @@ try{
   const prepared=await kernel.ctx.llm.prepareCall({provider:'deepseek-official',model:'deepseek-flash',maxTokens:256,reasoningEffort:'off'});
   report.context_window=prepared.context.contextWindow;if(report.context_window>131072)throw Error('mnn-test-route-window-too-large');
   const runtime=new RuntimeStore(data);runtime.configure({continuous:false,reasoningEffort:'off',maxTokens:256});runtime.close();
-  mnn=mountMnn(kernel.ctx,data,{enabled:true,tokenizer:path.join(root,'.research/mnn-v120/tokenizer'),idleMinutes:9999});
+  mnn=mountMnn(kernel.ctx,data,{enabled:true,tokenizer:path.join(root,'.research/mnn-v120/tokenizer'),idleMinutes:9999},{standalone:true});
   const {defineTool}=await kernel.load('dsh-tools');
   kernel.ctx.tools.register(defineTool({name:'memory_recall',description:'从同一 MNN 网络读取有来源的事实。',parameters:{query:{type:'string',required:true}},output:{schema:{type:'json'},render:(_a,v)=>[{type:'text',text:JSON.stringify(v)}]},execute:a=>mnn.client.call('recall',{query:a.query})}));
   const agent=await kernel.loop.create(randomUUID(),{provider:'deepseek-official',model:'deepseek-flash',maxTokens:256,reasoningEffort:'off'});

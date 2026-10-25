@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sqlite3
 import hashlib
+from contextlib import closing
 from . import MemoryStore, Scope, Event
 from .model import MemoryError, Node, canonical, digest
 from .semantic import SemanticDreaming, normalize_export
@@ -26,14 +27,31 @@ def implementation_revision():
     return hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in ('production.py','semantic.py','acr.py','visibility.py','evidence_recall.py','continuity.py'))).hexdigest()
 
 class ProductionMemory:
-    def __init__(self,directory,dsf_root=None,tokenizer=None,*,provider=None,counter=None):
+    def __init__(self,directory,dsf_root=None,tokenizer=None,*,provider=None,counter=None,registry=None,session_kind='conversation',generation=None):
         self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True)
         self.store=MemoryStore(self.directory/'memory.sqlite');self.scope=SHARED
         self.root,self.tokenizer,self.provider,self.counter=dsf_root,tokenizer,provider,counter
+        self.registry,self.session_kind,self.generation=Path(registry).resolve() if registry else None,session_kind,generation
+        self.store.db.execute('CREATE TABLE IF NOT EXISTS production_meta(key TEXT PRIMARY KEY,value TEXT)')
+        if self.registry:
+            row=self.store.db.execute("SELECT value FROM production_meta WHERE key='generation'").fetchone()
+            dirty=any(self.store.db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in ('events','nodes','native_sources','production_runs') if self.store.db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone())
+            if not generation or row and row[0]!=generation or not row and dirty:
+                self.store.close();raise MemoryError('source-generation-mismatch')
+            self.store.db.execute("INSERT OR IGNORE INTO production_meta VALUES('generation',?)",(generation,))
         self.store.db.executescript('''CREATE TABLE IF NOT EXISTS native_sources(session TEXT,native_seq INTEGER,global_seq INTEGER UNIQUE,source_digest TEXT,PRIMARY KEY(session,native_seq));
             CREATE TABLE IF NOT EXISTS production_runs(id TEXT PRIMARY KEY,body TEXT NOT NULL);''')
         self.store.db.execute('CREATE TABLE IF NOT EXISTS operator_hidden_sources(id TEXT PRIMARY KEY)')
     def close(self):self.store.close()
+    def authorize_source(self,session):
+        if not self.registry:return
+        try:
+            if not self.registry.is_file():raise MemoryError('source-registry-unavailable')
+            with closing(sqlite3.connect(self.registry.as_uri()+'?mode=ro',uri=True,timeout=1)) as db:
+                epoch=db.execute("SELECT value FROM meta WHERE key='mnn-generation'").fetchone()
+                row=db.execute('SELECT kind,archived FROM chat_sessions WHERE session=?',(session,)).fetchone()
+            if not epoch or epoch[0]!=self.generation or not row or row[0]!=self.session_kind or row[1]!=0:raise MemoryError('source-inactive-or-generation-mismatch')
+        except sqlite3.Error:raise MemoryError('source-registry-unavailable') from None
     def rebase(self,original):
         mapped=deepcopy(original);sid=original['session_id'];lookup={}
         with self.store.transaction():
@@ -49,6 +67,7 @@ class ProductionMemory:
         mapped['surface']=[lookup[n] for n in original.get('surface',[])]
         return mapped,lookup
     def capture(self,export):
+        self.authorize_source(export['session_id'])
         mapped,lookup=self.rebase(export)
         mapped['hidden_seqs']=[int(r[0].split(':',1)[1]) for r in self.store.db.execute("SELECT id FROM operator_hidden_sources WHERE id LIKE 'dsh-event:%'")]
         records=normalize_export(mapped)
@@ -100,7 +119,7 @@ class ProductionMemory:
         if (folder/'history.json').exists():
             history=json.loads((folder/'history.json').read_text(encoding='utf-8'))
         elif selected:
-            history,_=SemanticDreaming(self.store,self.scope,provider,counter,folder/'semantic',concurrency=1).run(incremental)
+            history,_=SemanticDreaming(self.store,self.scope,provider,counter,folder/'semantic',concurrency=1,before_commit=lambda:self.authorize_source(original['session_id'])).run(incremental)
         else:
             receipt=self.store.db.execute("SELECT body FROM production_runs WHERE json_extract(body,'$.session_id')=? OR json_extract(body,'$.plan.session_id')=? ORDER BY rowid DESC LIMIT 1",(original['session_id'],original['session_id'])).fetchone()
             if not receipt:raise MemoryError('dreaming-no-history')
@@ -110,6 +129,7 @@ class ProductionMemory:
             if not previous_file.is_relative_to(self.directory.resolve()):raise MemoryError('dreaming-history-path')
             # Receipt paths are provenance, never a request to open another file.
             history=json.loads(previous_file.read_text(encoding='utf-8'))
+        self.authorize_source(original['session_id'])
         history={**history,'snapshot_digest':digest(mapped['events'])};history_file=folder/'history.json';atomic_json(history_file,history)
         result={'run_id':run_id,'session_id':original['session_id'],'implementation_revision':revision,'memoryPersisted':True,'self_update':'noop','semantic_file':history_file.relative_to(self.directory).as_posix(),'snapshot_digest':digest(original['events']),'carryover':history['consolidation']['carryover']}
         if reconstruct:

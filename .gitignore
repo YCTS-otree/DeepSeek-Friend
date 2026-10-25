@@ -1,5 +1,6 @@
 node_modules/
 .research/
+.maintenance/
 data/
 config.json
 .env

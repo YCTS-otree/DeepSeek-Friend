@@ -575,6 +575,12 @@ class Handler(BaseHTTPRequestHandler):
         if (not self._host_ok() or not self._authenticated()
                 or self.headers.get("Origin") != self._origin()
                 or not same(self.headers.get("X-CSRF-Token", ""), self._csrf())):
+            # Drain bounded normal requests before closing, otherwise Windows
+            # can reset TCP while the caller is still sending its JSON body.
+            try:
+                rejected_size=int(self.headers.get('Content-Length','0'))
+                if 0<rejected_size<=65536:self.rfile.read(rejected_size)
+            except (ValueError,OSError):pass
             return self._reply(403, {"error": "request-rejected"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
@@ -627,8 +633,14 @@ def main():
         public=not args.local and (args.public or saved.get('enabled') is True)
         if public:
             auth=PasswordAuth(ROOT/'ADMIN_PWD.key')
-            op=controller.archives.feature('admin-public-configure',{'enabled':True,'port':args.port});controller.archives.run(op['archiveOperation'])
-            if controller.archives.operations[op['archiveOperation']]['state']!='done':raise ValueError('dsf-public-checkpoint-failed')
+            op=controller.archives.feature('admin-public-configure',{'enabled':True,'port':args.port})
+            # feature() already queues the checkpoint on the controller worker.
+            # Running it here too races two backups against the offline lock.
+            checkpoint=controller.archives.operations[op['archiveOperation']]
+            deadline=time.monotonic()+300
+            while checkpoint['state'] in ('queued','running') and time.monotonic()<deadline:
+                time.sleep(.05)
+            if checkpoint['state']!='done':raise ValueError('dsf-public-checkpoint-failed')
             servers.append(LocalServer(('0.0.0.0',args.port),controller,auth));servers.append(IPv6Server(('::',args.port),controller,auth))
             server=servers[0]
         else:server=LocalServer(("127.0.0.1", args.port), controller);servers.append(server)

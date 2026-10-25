@@ -121,7 +121,7 @@ class ComponentTests(unittest.TestCase):
         root,data=self.fixture();memory=self.seed_cognitive(data)
         native=root/'.runtime/home/sessions/log.zstd';original_context=native.read_bytes()
         self_dir=data/'cognitive/self';self_dir.mkdir();(self_dir/'self-state.json').write_text('{"version":"v0.1.0"}')
-        archive=dsf.snapshot(root,data);target=compat.current_components(root);target['cognitive_state']['version']=3
+        archive=dsf.snapshot(root,data);target=compat.current_components(root);target['cognitive_state']['version']=4
         (root/'package.json').write_text('{"version":"9.0.0"}')
         native.write_bytes(b'current context');(data/'cognitive/room/diary.txt').write_text('current room');self.seed_cognitive(data,'current')
         invoked=[]
@@ -134,7 +134,7 @@ class ComponentTests(unittest.TestCase):
             rows={r['id']:r for r in report['components']}
             self.assertEqual(rows['dsh_context']['status'],'compatible');self.assertEqual(rows['room']['status'],'compatible')
             self.assertFalse(report['canRestore'])
-            compat.register_migration('cognitive_state','cognitive-state',2,'cognitive-state',3,'memory-architecture-v3',migrate)
+            compat.register_migration('cognitive_state','cognitive-state',3,'cognitive-state',4,'memory-architecture-v4',migrate)
             report=compat.compatibility(dsf.inspect(archive),root)
             self.assertTrue(report['canRestore']);self.assertEqual(next(r for r in report['components'] if r['id']=='cognitive_state')['status'],'migration-planned')
             dsf.restore(archive,root,data)

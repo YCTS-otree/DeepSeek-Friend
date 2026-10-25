@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
 import {createNativeKernel}from'../vendor/dsf-mnn/adapters/dsh/native-kernel.mjs';import{MnnClient}from'../src/mnn/client.js';import{exportSession}from'../dsh/mnn.js';import{appendContinuity}from'../src/mnn/continuity.js';
 test('native continuity restoration preserves raw events, SYS, id and Inbox semantics without an Agent turn',async()=>{
- const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsf-continuity-')),k=await createNativeKernel(path.resolve('.runtime/node_modules'),path.join(dir,'sessions')),client=new MnnClient(path.join(dir,'memory'),{tokenizer:path.resolve('.runtime/mnn-tokenizer')});
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsf-continuity-')),k=await createNativeKernel(path.resolve('.runtime/node_modules'),path.join(dir,'sessions')),client=new MnnClient(path.join(dir,'memory'),{tokenizer:path.resolve('.runtime/mnn-tokenizer'),standalone:true});
  try{
   const s=k.sessionModule.Session.create('same-session'),llm=k.llmModule;
   s.append('system/message',{turn:1,step:1,message:llm.createSystemMessage('Original Core and Self')},{surfaceOp:'append'});

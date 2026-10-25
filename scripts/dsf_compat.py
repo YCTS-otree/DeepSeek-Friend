@@ -5,7 +5,7 @@ from collections import deque
 DEFINITIONS = {
     'dsh_context': ('DSH 上下文与附件', 'dsh-session', None),
     'bridge_state': ('桥接、聊天与会话映射', 'bridge-state', 1),
-    'cognitive_state': ('长期记忆与 Self Model（原子组）', 'cognitive-state', 2),
+    'cognitive_state': ('长期记忆与 Self Model（原子组）', 'cognitive-state', 3),
     'room': ('小房间', 'room-files', 1),
     'prompts': ('核心 Prompt', 'prompt-files', 1),
     'test_state': ('测试记忆与资源', 'test-state', 1),
@@ -116,3 +116,11 @@ def migrate_cognitive_to_mnn(stage):
     finally:memory.close()
 
 register_migration('cognitive_state','cognitive-state',1,'cognitive-state',2,'legacy-memory-to-shared-mnn',migrate_cognitive_to_mnn)
+
+def require_safe_generation(stage):
+    marker=stage/'data/cognitive/mnn/activation.json'
+    if marker.exists():
+        value=json.loads(marker.read_text(encoding='utf-8'))
+        if value.get('enabled') and not value.get('generation'):raise ValueError('mnn-active-legacy-requires-clean-rebuild')
+
+register_migration('cognitive_state','cognitive-state',2,'cognitive-state',3,'mnn-source-generation-gate',require_safe_generation)

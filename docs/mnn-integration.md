@@ -88,7 +88,7 @@ python scripts/mnn_admin.py retry --session <UUID>
 python scripts/mnn_admin.py rollback Archive/<备份名>.DSF
 ```
 
-整份恢复、分类型兼容：DSH context 由实际 DSH 版本控制；cognitive-state 升至格式 2，格式 1 的旧记忆在暂存目录迁移为 MNN，共同 Self/房间/Prompt 不因应用版本变化而强制转换。旧快照不自动启用 MNN。
+整份恢复、分类型兼容：DSH context 由实际 DSH 版本控制；cognitive-state 当前为格式 3，旧格式先在暂存目录迁移。共同 Self/房间/Prompt 不因应用版本变化而强制转换。格式 2 中已启用但没有数据代际的 MNN 图谱要求显式干净重建，禁止直接重标；接入前无 MNN 的快照可安全迁移。旧快照不自动启用 MNN。详见 [后台来源隔离与专项重建](mnn-clean-generation-20261025.md)。
 
 ## 已知限制
 

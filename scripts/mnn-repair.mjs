@@ -34,7 +34,8 @@ try{
  kernel.ctx.tools.schemas=()=>structuredClone(tools);
  const window=Math.min(1000000,original.requestContext()?.contextWindow??1000000);
  await registerRemoteProvider(kernel,root,{contextWindow:window,maxTokens:8192,thinking:'enabled'});
- mnn=mountMnn(kernel.ctx,data,{enabled:true,paused:true,tokenizer});
+ const activation=JSON.parse(await fs.readFile(path.join(data,'cognitive/mnn/activation.json'),'utf8'));
+ mnn=mountMnn(kernel.ctx,data,{...activation,enabled:true,paused:true,tokenizer});
  if(process.argv.includes('--private-context')){
   const call=mnn.client.call.bind(mnn.client);
   mnn.client.call=(action,args={},signal)=>{

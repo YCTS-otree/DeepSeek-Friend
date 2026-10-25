@@ -8,6 +8,7 @@ export function mnnSettings(dataDir) {
   if(!fs.existsSync(file))return {enabled:false};
   const c=JSON.parse(fs.readFileSync(file,'utf8'));
   if(c.privateRepairPending)throw Error('mnn-private-repair-required');
+  if(c.enabled&&(!/^[a-f0-9-]{36}$/.test(c.generation??'')))throw Error('mnn-generation-required');
   if(c.schema!=='dsf-mnn-activation/1'||c.runtimeVersion!=='0.2.0-rc.2'||typeof c.enabled!=='boolean'||typeof c.tokenizer!=='string')throw Error('mnn-activation-invalid');
   return c;
 }
@@ -16,7 +17,8 @@ export class MnnClient {
   call(action,args={},signal) {
     return new Promise((resolve,reject)=>{
       if(signal?.aborted)return reject(Error('mnn-cancelled'));
-      const child=spawn(this.python,['-m','dsf_mnn.production_cli','--directory',this.directory,'--dsf-root',this.project,'--tokenizer',this.config.tokenizer],
+      const policy=this.config.standalone?['--standalone']:['--registry',this.config.registryFile??path.resolve(this.directory,'../..','bridge.sqlite'),'--session-kind',this.config.sessionKind??'conversation','--generation',this.config.generation??''];
+      const child=spawn(this.python,['-m','dsf_mnn.production_cli','--directory',this.directory,'--dsf-root',this.project,'--tokenizer',this.config.tokenizer,...policy],
         {env:{...process.env,PYTHONPATH:path.join(this.project,'vendor/dsf-mnn/src'),PYTHONIOENCODING:'utf-8'},stdio:['pipe','pipe','pipe'],windowsHide:true});
       this.children.add(child);let output='',done=false;
       const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);this.children.delete(child);error?reject(error):resolve(value);};

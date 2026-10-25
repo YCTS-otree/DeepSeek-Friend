@@ -9,6 +9,7 @@ import { QQChannel } from './qq.js';
 import { OWNER_QQ, qqDestination } from './contacts.js';
 import { QQMedia } from './qq-media.js';
 import { expandForward } from './qq-forward.js';
+import {mnnSettings} from './mnn/client.js';
 
 export const isCommand = text => /^\/(?:approve|deny|answer|cancel|reset|status)(?:\s|$)/.test(text.trim());
 export function publicEvent(event) {
@@ -44,6 +45,7 @@ export function answerValue(request, value) {
 export class Engine {
   constructor(config, store, dsh, ilink, account, signal) {
     Object.assign(this, { config, store, dsh, ilink, account, signal });
+    const memory=config.cognitive?.enabled?mnnSettings(config.dataDir):{enabled:false};if(memory.enabled)this.store.set('mnn-generation',memory.generation);
     this.controller = new AbortController(); this.signal = AbortSignal.any([signal, this.controller.signal]);
     this.cognitive = config.cognitive?.enabled ? new CognitiveService(config, dsh, account, this.signal) : null;
     this.testCognitive = config.cognitive?.enabled ? new CognitiveService({ ...config, dataDir: path.join(config.dataDir, 'testing'), cognitiveTest: true }, dsh, account, this.signal) : null;
@@ -82,7 +84,7 @@ export class Engine {
   }
   async onSession(sid, frame) {
     const mapping = this.store.session(sid);
-    if (!mapping) return;
+    if (!mapping || mapping.archived) return;
     let records;
     if (frame.type === 'snapshot') {
       records = [...frame.records ?? []]; let more = frame.hasMore;
@@ -437,7 +439,7 @@ export class Engine {
       for (const j of this.store.db.prepare("SELECT * FROM jobs WHERE account=? AND kind='conversation' ORDER BY created").all(this.account.accountId)) if (allowed.has(j.user) && this.store.session(j.session)?.kind !== 'test') this.runtime.rememberContact(j);
     }
     if (this.explicit) for (const j of this.store.db.prepare("SELECT * FROM jobs WHERE state IN ('waiting','submitting') AND session IS NOT NULL").all()) if (!this.runtime.context(j.session)) this.runtime.bind(j.session, j.id, this.store.session(j.session)?.kind === 'test' ? 'test' : j.kind === 'alarm' ? 'alarm' : 'conversation');
-    for (const row of this.store.db.prepare('SELECT session FROM chat_sessions').all()) this.dsh.follow(row.session);
+    for (const row of this.store.db.prepare('SELECT session FROM chat_sessions WHERE archived=0').all()) this.dsh.follow(row.session);
     const tasks = [this.dsh.run(this.signal), ...(this.config.weixin.enabled ? [this.poll()] : []), ...(this.qq ? [this.qq.run()] : []), (async () => {
       while (!this.signal.aborted) { await this.tick(); await sleep(100, this.signal).catch(() => {}); }
     })(), (async () => {
